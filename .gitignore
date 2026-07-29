@@ -1,0 +1,9 @@
+.claude/
+.venv313/
+configs/config.yml
+data/
+reports/
+.env
+CLAUDE.md
+*__pycache__
+reports/
