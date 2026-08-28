@@ -42,7 +42,7 @@ def _leer_scoring(scoring_path: str | None = None) -> pd.DataFrame:
     Raises:
         FileNotFoundError: Si el archivo no existe.
     """
-    path = Path(scoring_path) if scoring_path else Path.cwd() / "data" / "scoring" / "scoring_inactivos.parquet"
+    path = Path(scoring_path) if scoring_path else Path.cwd() / "data" / "scoring" / "scoring_inactivosv2.parquet"
     if not path.exists():
         raise FileNotFoundError(f"No existe {path}. Corre primero build_score().")
     return pd.read_parquet(path, engine="pyarrow")
@@ -103,7 +103,7 @@ def graficar_distribucion_score(
     ax.legend()
     fig.tight_layout()
 
-    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / "distribucion_score.jpg"
+    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / "distribucion_scoreV2.jpg"
     path_salida.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path_salida, dpi=150)
     plt.close(fig)
@@ -210,7 +210,7 @@ def resumen_variables_por_grupo(
 
     resumen = pd.concat(filas, ignore_index=True)
 
-    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / "resumen_variables_por_grupo.csv"
+    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / "resumen_variables_por_grupoV2.csv"
     path_salida.parent.mkdir(parents=True, exist_ok=True)
     resumen.to_csv(path_salida, index=False, encoding="utf-8")
 
@@ -258,7 +258,7 @@ def resumen_variables_por_grupo_horizontal(
 
     path_salida = (
         Path(out_path) if out_path
-        else Path.cwd() / "reports" / "scoring" / "resumen_variables_por_grupo_horizontal.csv"
+        else Path.cwd() / "reports" / "scoring" / "resumen_variables_por_grupo_horizontalV2.csv"
     )
     path_salida.parent.mkdir(parents=True, exist_ok=True)
     horizontal.to_csv(path_salida, encoding="utf-8")

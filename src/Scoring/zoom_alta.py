@@ -23,8 +23,7 @@ def xtr_bases(analytic_path: str | None = None,
         raise FileNotFoundError(f'No existe {path_base}. Corre primero el modulo de transformacion')
     
     COL_NECESARIAS = [
-        "Id", 
-        "Oferta_Reactivacion_Disponible", 
+        "Id",
         "Numcantidadproductos", 
         "Cuotas_pagadas_vs_antiguedad", 
         "Saldoaportes", 
@@ -38,7 +37,7 @@ def xtr_bases(analytic_path: str | None = None,
     
     # --- Se extrae la base de altos --- #
     
-    path_scoring = Path(scoring_path) if scoring_path else Path().cwd() /"data"/ "scoring" / "scoring_inactivos.parquet"
+    path_scoring = Path(scoring_path) if scoring_path else Path().cwd() /"data"/ "scoring" / "scoring_inactivosV2.parquet"
     
     alta = (
         pd.read_parquet(
@@ -134,14 +133,7 @@ def zoom(
     # Normalizar las variables
     # ===========================
     
-    # --- 1. Oferta_Reactivacion_Disponible --- #
-    oferta_reactivaciones = inferencia_continua(
-        series=df['Oferta_Reactivacion_Disponible'], 
-        nombre='oferta_reactivacion', 
-        kind='Continua', 
-    )
-    
-    # --- 2. Numcantidadproductos --- #
+    # --- 1. Numcantidadproductos --- #
     NumCantidadProductos = inferencia_continua(
         series=df['Numcantidadproductos'], 
         nombre='num_productos', 
@@ -149,7 +141,7 @@ def zoom(
         kind='Continua', 
     )
     
-    # --- 3. Cuotas_pagadas_vs_antiguedad --- #
+    # --- 2. Cuotas_pagadas_vs_antiguedad --- #
     CuotasAntiguedad = inferencia_continua(
         series=df['Cuotas_pagadas_vs_antiguedad'], 
         nombre='cuotas_ant', 
@@ -157,7 +149,7 @@ def zoom(
         kind='Continua', 
     )
     
-    # --- 4. Saldoaportes --- #
+    # --- 3. Saldoaportes --- #
     SaldoAportes = inferencia_continua(
         series=df['Saldoaportes'], 
         nombre='saldo', 
@@ -165,7 +157,7 @@ def zoom(
         kind='log', 
     )
     
-    # --- 5. ValorCapitalizado --- #
+    # --- 4. ValorCapitalizado --- #
     ValorCapitalizado = inferencia_continua(
         series=df['Valor_Capitalizado'], 
         nombre='valor_capitalizado', 
@@ -177,8 +169,8 @@ def zoom(
     # Crear la serie de ZOOM
     # =======================
     
-    zoom = pd.concat([oferta_reactivaciones, NumCantidadProductos, 
-                     CuotasAntiguedad, SaldoAportes, ValorCapitalizado], 
+    zoom = pd.concat([NumCantidadProductos, CuotasAntiguedad, 
+                      SaldoAportes, ValorCapitalizado], 
                     axis=1).mean(axis=1, skipna=True)
 
     # =========================
@@ -241,6 +233,6 @@ def build_zoom() -> None:
     # ==========
     path_out = Path("data/scoring")
     path_out.mkdir(parents=True, exist_ok=True)
-    print(f"Exportado: {path_out / 'priorizacion_alta.xlsx'}...")
+    print(f"Exportado: {path_out / 'priorizacion_altaV2.xlsx'}...")
     FeaturesAlta.to_excel(path_out / "priorizacion_alta.xlsx", index=False,)
     print('Priorizacion Correctamente Exportada ✅')
