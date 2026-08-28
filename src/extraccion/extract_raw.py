@@ -235,13 +235,23 @@ def extract_demografica(
         periodo_consulta = (
             datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1)
         ).strftime("%Y-%m-%d")
-
+        
+        # --- Periodo final between --- #
+        periodo_ym = (
+            datetime.datetime.today() - relativedelta(months=1)
+        ).strftime("%Y%m")
+        
+        # --- Periodo inicial between --- #
+        periodo_ym_past = (
+            datetime.datetime.strptime(periodo_ym, "%Y%m") - relativedelta(months=12)
+        ).strftime("%Y%m")
+        
         cedulas_str = [str(c) for c in grupo["ID"].unique().tolist()]
         lotes = [
             cedulas_str[i : i + tamanio_lote]
             for i in range(0, len(cedulas_str), tamanio_lote)
         ]
-
+        
         query_periodo = base_query.replace("'?'", f"'{periodo_consulta}'")
         conn_bi = None
         try:
@@ -249,7 +259,10 @@ def extract_demografica(
             for lot in lotes:
                 cedulas_consulta = ",".join(f"'{c}'" for c in lot)
                 query_lote = query_periodo.replace("{ids}", cedulas_consulta)
-                df_temp = pd.read_sql(sql=query_lote, con=conn_bi)  # type: ignore
+                df_temp = pd.read_sql(sql=query_lote, 
+                                      con=conn_bi,  # type: ignore
+                                      params=[int(periodo_ym_past), 
+                                              int(periodo_ym)]) 
                 df_list.append(df_temp)
             print(f"demografica -- Periodo: {periodo_consulta} -- Consultado")
         except Exception as e:
