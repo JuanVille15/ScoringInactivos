@@ -377,6 +377,30 @@ def calcular_saldoaportes(demografica: pd.DataFrame) -> pd.DataFrame:
         .drop_duplicates(subset="Id", keep="first")
     )
     
+def cambios_sipas(sipas:pd.DataFrame) -> pd.DataFrame:
+    
+    # --- Se calcula :Perseverancia_Cerca ---#
+    
+    df = sipas.copy()
+    df = (
+        df
+        .assign(
+            Perseverancia_Cerca = lambda df:
+                np.where(
+                    df['Meses_Hasta_Perseverancia'].clip(0) <= 60, 
+                    1, 
+                    0
+                )
+        )
+        .drop(
+            columns={
+                'Meses_Hasta_Perseverancia'
+            }
+        )
+    )
+    
+    return df 
+    
 def calcular_promedio_fac_rec(
     df: pd.DataFrame,
     fac_rec: pd.DataFrame,
@@ -575,7 +599,7 @@ def calcular_oferta_reactivacion(features_inactivos: pd.DataFrame) -> pd.DataFra
     )
 
 
-def calcular_valor_capitalizado(features_inactivos: pd.DataFrame) -> pd.DataFrame:
+def calcular_valor_capitalizado(sipas: pd.DataFrame) -> pd.DataFrame:
     """Extrae el valor capitalizado en plan básico (D2). Literal, sin transformación.
 
     Los nulos representan cédulas sin plan básico (no aplica), no dato
@@ -589,15 +613,14 @@ def calcular_valor_capitalizado(features_inactivos: pd.DataFrame) -> pd.DataFram
         DataFrame con columnas ``['Id', 'Valor_Capitalizado']``.
     """
     return (
-        features_inactivos
-        .assign(Id=lambda d: _id_a_str(d["CEDULA"]))
-        .rename(columns={"Valor Capitalizado": "Valor_Capitalizado"})
+        sipas
+        .assign(Id=lambda d: _id_a_str(d[""]))
         [["Id", "Valor_Capitalizado"]]
         .drop_duplicates(subset="Id", keep="first")
     )
 
 
-def calcular_tiempo_perseverancia(features_inactivos: pd.DataFrame) -> pd.DataFrame:
+def calcular_tiempo_perseverancia(sipas: pd.DataFrame) -> pd.DataFrame:
     """Extrae el indicador booleano de cercanía a perseverar (D4).
 
     Los nulos representan cédulas sin plan básico (no aplica, misma población
@@ -612,9 +635,8 @@ def calcular_tiempo_perseverancia(features_inactivos: pd.DataFrame) -> pd.DataFr
         DataFrame con columnas ``['Id', 'Perseverancia_Cerca']``.
     """
     return (
-        features_inactivos
-        .assign(Id=lambda d: _id_a_str(d["CEDULA"]))
-        .rename(columns={"Perseverancia Cerca": "Perseverancia_Cerca"})
+        sipas
+        .assign(Id=lambda d: _id_a_str(d["ID"]))
         [["Id", "Perseverancia_Cerca"]]
         .drop_duplicates(subset="Id", keep="first")
     )
@@ -754,7 +776,7 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
         how="left", on="Id",
     )
     df = df.merge(right=calcular_n_usos(bases["enriquecimiento_360"]), how="left", on="Id")
-    df = df.merge(right=calcular_valor_capitalizado(bases["features_inactivos"]), how="left", on="Id")
+    df = df.merge(right=calcular_valor_capitalizado(bases["sipas"]), how="left", on="Id")
 
     # D3 · RECENCIA
     df = df.merge(
@@ -778,7 +800,7 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
     )
     df = df.merge(right=calcular_clv(bases["clv"]), how="left", on="Id")
     df = df.merge(right=calcular_saldoaportes(bases["demografica"]), how="left", on="Id")
-    df = df.merge(right=calcular_tiempo_perseverancia(bases["features_inactivos"]), how="left", on="Id")
+    df = df.merge(right=calcular_tiempo_perseverancia(bases["sipas"]), how="left", on="Id")
 
     # D5 · EXTERNO
     df = df.merge(right=calcular_alertas_externas(bases["enriquecimiento_360"]), how="left", on="Id")
