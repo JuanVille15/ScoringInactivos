@@ -277,7 +277,6 @@ def extract_demografica(
 
     return {"demografica": pd.concat(df_list, axis=0, ignore_index=True)}
 
-
 def extract_tenencia_historica(
     inac: pd.DataFrame,
     con_bi: str,
@@ -538,7 +537,79 @@ def extract_fac_rec_gecc(
     })
 
     return {"fac_rec": fac_rec}
+
+def extract_sipas(
+    inac:pd.DataFrame, 
+    con_bi:str,
+    tamanio_lote:int = 2000, 
+) -> dict[str,pd.DataFrame]:
     
+    path_query = Path.cwd() / "sql" / "sipas.sql"
+    
+    if not path_query.exists():
+        raise FileNotFoundError(f"La consulta {path_query.name} no existe en sql/")
+    
+    base_query = path_query.read_text(encoding="utf-8", errors="coerce")
+    
+    # --- Se asigna el periodo de consulta --- # 
+    periodo_consulta = (
+        datetime.date.today() - relativedelta(months=1)
+    ).strftime(format='%Y-%m-%d')
+    
+    base_query = base_query.replace('?',periodo_consulta)
+    
+    # --- Se han lotes de consulta --- #
+    cedulas_str = [
+        str(c) for c in inac['ID'].unique().tolist()
+    ]
+    
+    lotes = [
+        cedulas_str[i:i+tamanio_lote] 
+        for i in range(0,len(cedulas_str),tamanio_lote)
+    ]
+    
+    # --- Se itera por cada lote de consulta --- #
+    resultados=[]
+    conn_bi = None
+    for lot in lotes:
+        try:
+            conn_bi = pyodbc.connect(con_bi)
+            cedulas_consulta = ','.join(f"'{c}'" for c in lot)
+            query_lote = base_query.replace('{ids}',cedulas_consulta)
+            df_temp = pd.read_sql(sql=query_lote, con=conn_bi) #type: ignore
+            resultados.append(df_temp)
+            print(f"Base Sipas -- Periodo: {periodo_consulta} -- Consultado")
+        except Exception as e:
+            print(f'Error consultado Sipas -- Periodo: {periodo_consulta}')
+            raise
+        finally:
+            if conn_bi is not None:
+                conn_bi.close()
+    
+    if not resultados:
+        raise ValueError(f'No se pudo obtener resultado SIPAS --- Periodo: {periodo_consulta}')
+    
+    # --- Se unen los lotes --- #
+    sipas = (
+        pd.concat(
+            resultados, 
+            axis=0, 
+            ignore_index=True
+        )
+        .rename(
+            columns={'strIdentificacion':'ID'}
+        )
+        .astype(
+            {
+                'ID':int, 
+                'Valor_Capitalizado': 'Int64', 
+                'Meses_Hasta_Perseverancia': 'Int64', 
+            }
+        )
+    )
+
+    return {'sipas':sipas}
+
 def leer_bases(paths_bases: dict[str, str]) -> dict[str, pd.DataFrame]:
     """
     Lee un conjunto de bases insumo desde disco a partir de un diccionario de rutas
