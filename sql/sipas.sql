@@ -6,5 +6,6 @@ FROM Operaciones.Solidaridad.tblPlanesSolidaridadAsociadosInactivos
 WHERE
     Operaciones.$partition.pf_mes(dtmFechaInsercion) =
     Operaciones.$partition.pf_mes('?')
+	AND strIdentificacion IN ({ids})
 GROUP BY
 	strIdentificacion;
