@@ -39,7 +39,7 @@ def xtr_columnas_necesarias(analytic_path: str | None = None) -> pd.DataFrame:
             "Periodo", "Id",
             # D1 · Severidad inactividad
             "Tiempo_Inactividad_Meses", "Pct_Mora_GECC_6M",
-            "Recaudo_Total_Promedio_GECC_6M", "Oferta_Reactivacion_Disponible",
+            "Recaudo_Total_Promedio_GECC_6M",
             "intenciones_retiro_1y",
             # D2 · Enganche
             "Numcantidadproductos", "Cantidad_empresas", "Valor_perseverancia_vs_ingresos",
@@ -268,9 +268,8 @@ def calcular_scoring(
     v_tiempo_inact = normalizar_continua(df["Tiempo_Inactividad_Meses"],              name="tiempo_inactividad", invertir=True)
     v_saldo_deuda  = normalizar_continua(df["Pct_Mora_GECC_6M"],                      name="saldo_deuda",       invertir=True)
     v_pagos_parc   = normalizar_zero_inflated(df["Recaudo_Total_Promedio_GECC_6M"],    name="pagos_parciales")
-    v_oferta_react = normalizar_continua(df["Oferta_Reactivacion_Disponible"],        name="oferta_reactivacion")
     v_intenc_retiro = normalizar_zero_inflated(df["intenciones_retiro_1y"],            name="intencion_retiro",  invertir=True)
-    d1 = score_dimension([v_tiempo_inact, v_saldo_deuda, v_pagos_parc, v_oferta_react, v_intenc_retiro])
+    d1 = score_dimension([v_tiempo_inact, v_saldo_deuda, v_pagos_parc, v_intenc_retiro])
 
     # D2 · ENGANCHE
     v_numprod    = normalizar_continua(df["Numcantidadproductos"],                    name="num_productos")
@@ -395,5 +394,5 @@ def build_score() -> None:
 
     path_out = Path("data/scoring")
     path_out.mkdir(parents=True, exist_ok=True)
-    score.to_parquet(path_out / "scoring_inactivos.parquet", index=False, engine="pyarrow")
-    print(f"Exportado: {path_out / 'scoring_inactivos.parquet'}")
+    score.to_parquet(path_out / "scoring_inactivosV2.parquet", index=False, engine="pyarrow")
+    print(f"Exportado: {path_out / 'scoring_inactivosv2.parquet'}")
