@@ -7,7 +7,6 @@ se corre después de `build_score()` como diagnóstico, para revisar que la
 primera corrida con datos reales tenga sentido antes de confiar en el score.
 """
 
-import json
 from pathlib import Path
 
 import matplotlib
@@ -15,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.utils.helpers import periodo_mas_cercano
+from src.utils.helpers import periodo_mas_cercano, leer_cortes_scoring
 
 # Variables donde se fuerza mediana o media en 'valor_horizontal' en vez de la
 # regla automática moda/media. La regla automática (moda si varía entre grupos,
@@ -50,24 +49,6 @@ def _leer_scoring(scoring_path: str | None = None) -> pd.DataFrame:
     return pd.read_parquet(path, engine="pyarrow")
 
 
-def _leer_cortes(cortes_path: str | None = None) -> dict:
-    """Lee los cortes Bajo/Medio/Alto persistidos por `categorizar_score`.
-
-    Args:
-        cortes_path: Ruta personalizada. Si es None, usa
-            ``configs/scoring/cortes_scoring.json``.
-
-    Returns:
-        dict con claves 'bajo', 'medio', 'alto', cada una [limite_inf, limite_sup].
-
-    Raises:
-        FileNotFoundError: Si el archivo no existe.
-    """
-    path = Path(cortes_path) if cortes_path else Path.cwd() / "configs" / "scoring" / "cortes_scoring.json"
-    if not path.exists():
-        raise FileNotFoundError(f"No existe {path}. Corre primero build_score().")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 # ─── Distribución ──────────────────────────────────────────────────────────────
 
@@ -80,7 +61,7 @@ def graficar_distribucion_score(
 
     Args:
         scoring_path: Ruta personalizada al parquet de scoring. Ver `_leer_scoring`.
-        cortes_path: Ruta personalizada al json de cortes. Ver `_leer_cortes`.
+        cortes_path: Ruta personalizada al json de cortes. Ver `leer_cortes_scoring`.
         out_path: Ruta de salida del .jpg. Si es None, usa
             ``reports/scoring/distribucion_score.jpg``.
 
@@ -88,7 +69,7 @@ def graficar_distribucion_score(
         Path del archivo .jpg exportado.
     """
     score = _leer_scoring(scoring_path)
-    cortes = _leer_cortes(cortes_path)
+    cortes = leer_cortes_scoring(cortes_path)
 
     corte_bajo = cortes["bajo"][1]
     corte_alto = cortes["alto"][0]
