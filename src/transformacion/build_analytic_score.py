@@ -561,7 +561,7 @@ def calcular_intenciones_retiro(
     )
 
 
-def calcular_tiempo_inactividad(features_inactivos: pd.DataFrame) -> pd.DataFrame:
+def calcular_tiempo_inactividad(meses_inactividad: pd.DataFrame) -> pd.DataFrame:
     """Extrae el tiempo de inactividad en meses (D1). Literal, sin transformación.
 
     Args:
@@ -572,9 +572,8 @@ def calcular_tiempo_inactividad(features_inactivos: pd.DataFrame) -> pd.DataFram
         DataFrame con columnas ``['Id', 'Tiempo_Inactividad_Meses']``.
     """
     return (
-        features_inactivos
+        meses_inactividad
         .assign(Id=lambda d: _id_a_str(d["CEDULA"]))
-        .rename(columns={"TIEMPO INACTIVO EN MESES": "Tiempo_Inactividad_Meses"})
         [["Id", "Tiempo_Inactividad_Meses"]]
         .drop_duplicates(subset="Id", keep="first")
     )
@@ -757,7 +756,7 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
     df = poblacion.copy()
 
     # D1 · SEVERIDAD INACTIVIDAD
-    df = df.merge(right=calcular_tiempo_inactividad(bases["features_inactivos"]), how="left", on="Id")
+    df = df.merge(right=calcular_tiempo_inactividad(bases["meses_inactividad"]), how="left", on="Id")
     df = df.merge(
         right=calcular_promedio_fac_rec(poblacion, bases["fac_rec"]),
         how="left", on=["Id", "Periodo"],
