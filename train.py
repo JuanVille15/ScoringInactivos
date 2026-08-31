@@ -12,9 +12,10 @@ warnings.filterwarnings('ignore')
 def main() -> None:
     load_dotenv()
     con_bi = os.environ["CON_BI"]
+    con_gcc = os.environ["GCC_CON"]
 
     # --- 1. EXTRACCIÓN: trae todas las bases crudas necesarias para el proceso ---
-    bases = extract_raw(con_bi=con_bi)
+    bases = extract_raw(con_bi=con_bi, con_gcc=con_gcc)
 
     # --- 2. TRANSFORMACIÓN: arma la base analítica de scoring D1-D5 (severidad,
     # enganche, recencia, vínculo, externo) a partir de `bases` ---
