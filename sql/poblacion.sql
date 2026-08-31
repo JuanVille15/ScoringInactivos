@@ -1,6 +1,6 @@
 
 SELECT  
-	fct.stridentificacion, 
+	fct.stridentificacion AS [ID], 
 	fct.strcodestadoclientefuente, 
 	dime.strDescEstadoFuente 
 FROM BodegaCorporativa.[bodega].[factasociatividad] fct 
