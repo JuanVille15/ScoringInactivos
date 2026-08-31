@@ -4,7 +4,7 @@ bases crudas que entrega `extract_raw`.
 
 Salida: columnas ['Periodo', 'Id',
 'Tiempo_Inactividad_Meses', 'Factura_Total_Promedio_GECC_6M',
-'Recaudo_Total_Promedio_GECC_6M', 'Oferta_Reactivacion_Disponible',
+'Recaudo_Total_Promedio_GECC_6M',
 'intenciones_retiro_1y',
 'Numcantidadproductos', 'Cantidad_empresas', 'Valor_perseverancia_vs_ingresos',
 'Total_Eventos', 'Valor_Capitalizado',
@@ -48,8 +48,10 @@ def _poblacion_normalizada(poblacion: pd.DataFrame) -> pd.DataFrame:
     """Normaliza la base insumo a columnas ['Periodo', 'Id'] tipo str.
 
     Args:
-        poblacion: DataFrame leído de `Poblacion_Inactivos.xlsx`, con columnas
-            ``['Cedula', 'Periodo']``.
+        poblacion: ``bases['poblacion_inactivos']``, salida de `extract_inactivos`
+            (SQL) con columnas ``['Cedula', 'Periodo']`` — 'Cedula' es el nombre
+            que le da `extract_raw` a la columna 'ID' que trae la consulta, para
+            no romper esta función.
 
     Returns:
         Copia con columnas renombradas a ``['Periodo', 'Id']``, ambas como str.
@@ -378,9 +380,24 @@ def calcular_saldoaportes(demografica: pd.DataFrame) -> pd.DataFrame:
     )
     
 def cambios_sipas(sipas:pd.DataFrame) -> pd.DataFrame:
-    
+    """Deriva `Perseverancia_Cerca` (D4) a partir de `Meses_Hasta_Perseverancia`.
+
+    `bases['sipas']` trae `Meses_Hasta_Perseverancia` en crudo (puede venir
+    negativo si la fecha de perseverancia ya pasó). Se clipea a 0 antes de
+    comparar, y se marca `Perseverancia_Cerca = 1` cuando faltan 60 meses o
+    menos (5 años) para perseverar. La columna original se descarta: solo
+    interesa el indicador binario para el scoring.
+
+    Args:
+        sipas: DataFrame de ``bases['sipas']`` con columnas
+            ``['ID', 'Valor_Capitalizado', 'Meses_Hasta_Perseverancia']``.
+
+    Returns:
+        DataFrame con las mismas columnas de `sipas` salvo
+        `Meses_Hasta_Perseverancia`, reemplazada por `Perseverancia_Cerca` (0/1).
+    """
     # --- Se calcula :Perseverancia_Cerca ---#
-    
+
     df = sipas.copy()
     df = (
         df
@@ -498,64 +515,32 @@ def calcular_promedio_fac_rec(
     )
 
 
-def calcular_intenciones_retiro(
-    poblacion: pd.DataFrame,
-    consolidado_reactivaciones: pd.DataFrame,
-    meses: int = 12,
-) -> pd.DataFrame:
-    """Cuenta las intenciones de retiro registradas en el último año por cédula.
+def calcular_intenciones_retiro(demografica: pd.DataFrame) -> pd.DataFrame:
+    """Extrae la cantidad de intenciones de retiro registradas en el último año (D1).
 
-    Filtra ``bases['consolidado_reactivaciones']`` (informe de retención/
-    reconexión) a los registros de cada cédula con ``anomes`` dentro de los
-    `meses` meses anteriores al periodo objetivo (ventana retrospectiva, sin
-    incluir el propio periodo objetivo — ej. Periodo 202606 -> ventana
-    [202506, 202606)), y cuenta cuántas veces aparece cada cédula en esa
-    ventana (cada aparición es un intento de retiro/formulario de retención
-    gestionado).
+    Antes se contaba en pandas a partir del Excel `consolidado_reactivaciones`
+    (ventana retrospectiva de 12 meses filtrando por `anomes`). Esa cuenta
+    ahora vive en SQL: la CTE ``Intenciones_retiro`` dentro de ``demo.sql``
+    cuenta, para la misma ventana retrospectiva que ya usa el resto de
+    `demografica` (parámetros `periodo_ym_past`/`periodo_ym` fijados en
+    `extract_demografica`), los registros de la tabla `intencionesDeRetiro`
+    por cédula, y los deja como columna `intenciones_retiro_1y` vía LEFT JOIN.
 
     Args:
-        poblacion: Salida de `_poblacion_normalizada`, columnas ``['Periodo', 'Id']``.
-        consolidado_reactivaciones: DataFrame de
-            ``bases['consolidado_reactivaciones']`` con columnas
-            ``['Número de Identificación', 'anomes']`` (entre otras, no usadas
-            aquí). Puede tener varias filas por cédula y mes.
-        meses: Tamaño de la ventana retrospectiva en meses. Default 12.
+        demografica: DataFrame de ``bases['demografica']`` con columna
+            ``intenciones_retiro_1y`` (nula cuando el LEFT JOIN no encontró
+            registros en la ventana, no cuando el valor es 0).
 
     Returns:
-        DataFrame con columnas ``['Id', 'Periodo', 'intenciones_retiro_1y']``.
-        Cédulas sin registros en la ventana quedan en 0.
+        DataFrame con columnas ``['Id', 'intenciones_retiro_1y']``. Cédulas
+        sin registros en la ventana quedan en 0 (se imputa aquí el nulo del
+        LEFT JOIN).
     """
-    df = poblacion[["Periodo", "Id"]].assign(Id=lambda d: _id_a_str(d["Id"])).copy()
-
-    reg = (
-        consolidado_reactivaciones
-        .rename(columns={"Número de Identificación": "Id"})
-        .dropna(subset=["Id"])
-        .assign(Id=lambda d: _id_a_str(d["Id"]))
-        [["Id", "anomes"]]
-    )
-
-    df_merge = df.merge(right=reg, how="left", on="Id")
-    df_merge["Periodo_dt"] = pd.to_datetime(df_merge["Periodo"].astype(str), format="%Y%m")
-    df_merge["anomes_dt"] = pd.to_datetime(df_merge["anomes"].astype("Int64").astype(str), format="%Y%m")
-
-    ventana = df_merge[
-        df_merge["anomes_dt"].between(
-            df_merge["Periodo_dt"] - pd.DateOffset(months=meses),  # type: ignore[operator]
-            df_merge["Periodo_dt"],
-            inclusive="left",
-        )
-    ]
-
-    conteo = (
-        ventana
-        .groupby(["Id", "Periodo"])
-        .size()
-        .reset_index(name="intenciones_retiro_1y")
-    )
-
     return (
-        df.merge(right=conteo, how="left", on=["Id", "Periodo"])
+        demografica
+        .assign(Id=lambda d: _id_a_str(d["ID"]))
+        [["Id", "intenciones_retiro_1y"]]
+        .drop_duplicates(subset="Id", keep="first")
         .fillna({"intenciones_retiro_1y": 0})
         .astype({"intenciones_retiro_1y": int})
     )
@@ -565,8 +550,8 @@ def calcular_tiempo_inactividad(meses_inactividad: pd.DataFrame) -> pd.DataFrame
     """Extrae el tiempo de inactividad en meses (D1). Literal, sin transformación.
 
     Args:
-        features_inactivos: DataFrame de ``bases['features_inactivos']`` con
-            columnas ``['CEDULA', 'TIEMPO INACTIVO EN MESES']``.
+        meses_inactividad: DataFrame de ``bases['meses_inactividad']`` con
+            columnas ``['CEDULA', 'Tiempo_Inactividad_Meses']``.
 
     Returns:
         DataFrame con columnas ``['Id', 'Tiempo_Inactividad_Meses']``.
@@ -579,25 +564,6 @@ def calcular_tiempo_inactividad(meses_inactividad: pd.DataFrame) -> pd.DataFrame
     )
 
 
-def calcular_oferta_reactivacion(features_inactivos: pd.DataFrame) -> pd.DataFrame:
-    """Extrae la cantidad de ofertas de reactivación disponibles (D1), rango [0, 4].
-
-    Args:
-        features_inactivos: DataFrame de ``bases['features_inactivos']`` con
-            columnas ``['CEDULA', 'OFERTA_DISPONIBLE']``.
-
-    Returns:
-        DataFrame con columnas ``['Id', 'Oferta_Reactivacion_Disponible']``.
-    """
-    return (
-        features_inactivos
-        .assign(Id=lambda d: _id_a_str(d["CEDULA"]))
-        .rename(columns={"OFERTA_DISPONIBLE": "Oferta_Reactivacion_Disponible"})
-        [["Id", "Oferta_Reactivacion_Disponible"]]
-        .drop_duplicates(subset="Id", keep="first")
-    )
-
-
 def calcular_valor_capitalizado(sipas: pd.DataFrame) -> pd.DataFrame:
     """Extrae el valor capitalizado en plan básico (D2). Literal, sin transformación.
 
@@ -605,15 +571,16 @@ def calcular_valor_capitalizado(sipas: pd.DataFrame) -> pd.DataFrame:
     faltante: se preservan como NaN a propósito, no se imputan.
 
     Args:
-        features_inactivos: DataFrame de ``bases['features_inactivos']`` con
-            columnas ``['CEDULA', 'Valor Capitalizado']``.
+        sipas: DataFrame de ``bases['sipas']`` (o de `cambios_sipas`, que
+            conserva 'Valor_Capitalizado' intacto) con columnas
+            ``['ID', 'Valor_Capitalizado']``.
 
     Returns:
         DataFrame con columnas ``['Id', 'Valor_Capitalizado']``.
     """
     return (
         sipas
-        .assign(Id=lambda d: _id_a_str(d[""]))
+        .assign(Id=lambda d: _id_a_str(d["ID"]))
         [["Id", "Valor_Capitalizado"]]
         .drop_duplicates(subset="Id", keep="first")
     )
@@ -627,8 +594,9 @@ def calcular_tiempo_perseverancia(sipas: pd.DataFrame) -> pd.DataFrame:
     NaN a propósito, no se imputan. Ya vive en {0, 1}: no requiere escalarse.
 
     Args:
-        features_inactivos: DataFrame de ``bases['features_inactivos']`` con
-            columnas ``['CEDULA', 'Perseverancia Cerca']``.
+        sipas: Salida de `cambios_sipas` (no `bases['sipas']` en crudo — ese
+            no trae `Perseverancia_Cerca`, solo `Meses_Hasta_Perseverancia`),
+            con columnas ``['ID', 'Perseverancia_Cerca']``.
 
     Returns:
         DataFrame con columnas ``['Id', 'Perseverancia_Cerca']``.
@@ -641,18 +609,22 @@ def calcular_tiempo_perseverancia(sipas: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def calcular_n_usos(enriquecimiento_360: pd.DataFrame) -> pd.DataFrame:
+def calcular_n_usos(v_360: pd.DataFrame) -> pd.DataFrame:
     """Extrae la cantidad total de eventos/usos del asociado (D2). Literal.
 
+    Antes salía de ``bases['enriquecimiento_360']`` (Excel, deprecado); ahora
+    ``v_360.sql`` ya trae ``Total_Eventos`` (suma de eventos de educación,
+    recreación y fundación) directamente en la vista 360.
+
     Args:
-        enriquecimiento_360: DataFrame de ``bases['enriquecimiento_360']`` con
-            columnas ``['Identificacion', 'Total_Eventos']``.
+        v_360: DataFrame de ``bases['v_360']`` con columnas
+            ``['Identificacion', 'Total_Eventos']``.
 
     Returns:
         DataFrame con columnas ``['Id', 'Total_Eventos']``.
     """
     return (
-        enriquecimiento_360
+        v_360
         .assign(Id=lambda d: _id_a_str(d["Identificacion"]))
         [["Id", "Total_Eventos"]]
         .drop_duplicates(subset="Id", keep="first")
@@ -663,8 +635,8 @@ def calcular_pqr(pqrs: pd.DataFrame) -> pd.DataFrame:
     """Extrae la cantidad de PQR del último año (D3). Literal, sin transformación.
 
     Args:
-        enriquecimiento_360: DataFrame de ``bases['enriquecimiento_360']`` con
-            columnas ``['Identificacion', 'Cantidad_pqr_ultimo_anno']``.
+        pqrs: DataFrame de ``bases['pqrs']`` con columnas
+            ``['Identificacion', 'Cantidad_pqr_ultimo_anno']``.
 
     Returns:
         DataFrame con columnas ``['Id', 'Cantidad_pqr_ultimo_anno']``.
@@ -697,12 +669,15 @@ def calcular_turnos_oficina(v_360: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def calcular_alertas_externas(enriquecimiento_360: pd.DataFrame) -> pd.DataFrame:
+def calcular_alertas_externas(v_360: pd.DataFrame) -> pd.DataFrame:
     """Extrae las 3 alertas binarias del sector externo (D5). Literal, sin transformación.
 
+    Antes salían de ``bases['enriquecimiento_360']`` (Excel, deprecado); ahora
+    ``v_360.sql`` ya trae las 3 alertas directamente en la vista 360.
+
     Args:
-        enriquecimiento_360: DataFrame de ``bases['enriquecimiento_360']`` con
-            columnas ``['Identificacion', 'Alerta_Habito_Pago_Externo',
+        v_360: DataFrame de ``bases['v_360']`` con columnas
+            ``['Identificacion', 'Alerta_Habito_Pago_Externo',
             'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``
             (0/1, sin nulos).
 
@@ -711,7 +686,7 @@ def calcular_alertas_externas(enriquecimiento_360: pd.DataFrame) -> pd.DataFrame
         'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``.
     """
     return (
-        enriquecimiento_360
+        v_360
         .assign(Id=lambda d: _id_a_str(d["Identificacion"]))
         [["Id", "Alerta_Habito_Pago_Externo", "Alerta_Estado_Creditos_Externos",
           "Alerta_Capacidad_Pago_Externo"]]
@@ -731,15 +706,16 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
         bases: Diccionario retornado por `extract_raw`. Debe contener las claves
             ``poblacion_inactivos``, ``cantidad_productos``, ``tenencia_historica``,
             ``v_360``, ``demografica``, ``reactivaciones_historicas``, ``clv``,
-            ``fac_rec``, ``consolidado_reactivaciones``, ``features_inactivos``,
-            ``enriquecimiento_360``.
-        analytic_path: Ruta de salida personalizada. Si es None, exporta a
-            ``data/analytic/analytic_score_base.parquet``.
+            ``fac_rec``, ``sipas``, ``pqrs``, ``meses_inactividad``.
+        analytic_path: Ruta base de salida personalizada. Si es None, exporta bajo
+            ``data/analytic/``. En ambos casos, dentro de una carpeta con el
+            periodo de ejecución (YYYYMM), igual que `export_bases` en raw —
+            ej. ``data/analytic/202608/analytic_score_base.parquet``.
 
     Returns:
         DataFrame con columnas ``['Periodo', 'Id',
         'Tiempo_Inactividad_Meses', 'Factura_Total_Promedio_GECC_6M',
-        'Recaudo_Total_Promedio_GECC_6M', 'Oferta_Reactivacion_Disponible',
+        'Recaudo_Total_Promedio_GECC_6M',
         'intenciones_retiro_1y', 'Numcantidadproductos', 'Cantidad_empresas',
         'Valor_perseverancia_vs_ingresos', 'Total_Eventos', 'Valor_Capitalizado',
         'Distancia_ultima_reactivacion', 'Recencia_ultimo_producto',
@@ -761,11 +737,7 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
         right=calcular_promedio_fac_rec(poblacion, bases["fac_rec"]),
         how="left", on=["Id", "Periodo"],
     )
-    df = df.merge(right=calcular_oferta_reactivacion(bases["features_inactivos"]), how="left", on="Id")
-    df = df.merge(
-        right=calcular_intenciones_retiro(poblacion, bases["consolidado_reactivaciones"]),
-        how="left", on=["Id", "Periodo"],
-    )
+    df = df.merge(right=calcular_intenciones_retiro(bases["demografica"]), how="left", on="Id")
 
     # D2 · ENGANCHE
     df = df.merge(right=calcular_numcantidadproductos(bases["cantidad_productos"]), how="left", on="Id")
@@ -774,8 +746,15 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
         right=calcular_perseverancia_vs_ingresos(bases["v_360"], bases["demografica"]),
         how="left", on="Id",
     )
-    df = df.merge(right=calcular_n_usos(bases["enriquecimiento_360"]), how="left", on="Id")
-    df = df.merge(right=calcular_valor_capitalizado(bases["sipas"]), how="left", on="Id")
+    df = df.merge(right=calcular_n_usos(bases["v_360"]), how="left", on="Id")
+
+    # bases['sipas'] trae Meses_Hasta_Perseverancia en crudo; cambios_sipas lo
+    # convierte en Perseverancia_Cerca (D4), que calcular_tiempo_perseverancia
+    # necesita más abajo — sin este paso esa columna no existe y el merge de D4
+    # explota con KeyError.
+    sipas = cambios_sipas(bases["sipas"])
+
+    df = df.merge(right=calcular_valor_capitalizado(sipas), how="left", on="Id")
 
     # D3 · RECENCIA
     df = df.merge(
@@ -799,15 +778,20 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
     )
     df = df.merge(right=calcular_clv(bases["clv"]), how="left", on="Id")
     df = df.merge(right=calcular_saldoaportes(bases["demografica"]), how="left", on="Id")
-    df = df.merge(right=calcular_tiempo_perseverancia(bases["sipas"]), how="left", on="Id")
+    df = df.merge(right=calcular_tiempo_perseverancia(sipas), how="left", on="Id")
 
     # D5 · EXTERNO
-    df = df.merge(right=calcular_alertas_externas(bases["enriquecimiento_360"]), how="left", on="Id")
+    df = df.merge(right=calcular_alertas_externas(bases["v_360"]), how="left", on="Id")
 
     df["Numcantidadproductos"] = df["Numcantidadproductos"].fillna(0)
     df["Cantidad_empresas"] = df["Cantidad_empresas"].fillna(0)
 
-    path_salida = Path(analytic_path) if analytic_path else Path(__file__).parents[2] / "data" / "analytic"
+    # Igual que raw/: una carpeta por periodo de ejecución (YYYYMM). Como cada
+    # corrida de extract_raw trae un único periodo, se toma directo de df.
+    periodo_ejecucion = df["Periodo"].iloc[0]
+
+    path_raiz = Path(analytic_path) if analytic_path else Path(__file__).parents[2] / "data" / "analytic"
+    path_salida = path_raiz / periodo_ejecucion
     path_salida.mkdir(parents=True, exist_ok=True)
 
     archivo_salida = path_salida / "analytic_score_base.parquet"
