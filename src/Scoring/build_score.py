@@ -9,25 +9,39 @@ import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import OrdinalEncoder, MinMaxScaler
 from src.utils.config import load_config
+from src.utils.helpers import periodo_mas_cercano
 import joblib
 import json
 
 # ─── Extracción ───────────────────────────────────────────────────────────────
 
-def xtr_columnas_necesarias(analytic_path: str | None = None) -> pd.DataFrame:
+def xtr_columnas_necesarias(
+    periodo: str | None = None,
+    analytic_path: str | None = None,
+) -> pd.DataFrame:
     """Lee desde la base analítica solo las columnas requeridas por el scoring D1-D5.
 
     Args:
-        analytic_path: Ruta personalizada al parquet de la base analítica. Si es
-            None, usa ``data/analytic/analytic_score_base.parquet``.
+        periodo: Periodo (YYYYMM) a leer, ej. '202608'. Si es None, se toma
+            la carpeta de periodo más reciente bajo ``data/analytic/``. Se
+            ignora si se pasa `analytic_path`.
+        analytic_path: Ruta personalizada y completa al parquet de la base
+            analítica (se usa tal cual, sin resolver periodo). Si es None, se
+            resuelve como ``data/analytic/{periodo}/analytic_score_base.parquet``.
 
     Returns:
         pd.DataFrame: Subconjunto con Periodo, Id y las variables de D1-D5.
 
     Raises:
-        FileNotFoundError: Si el archivo no existe.
+        FileNotFoundError: Si el archivo resuelto no existe (o, sin `periodo`
+            ni `analytic_path`, si no hay ninguna corrida de transformación).
     """
-    path_base = Path(analytic_path) if analytic_path else Path.cwd() / "data" / "analytic" / "analytic_score_base.parquet"
+    if analytic_path is not None:
+        path_base = Path(analytic_path)
+    else:
+        raiz_analytic = Path.cwd() / "data" / "analytic"
+        periodo_resuelto = periodo or periodo_mas_cercano(raiz_analytic, "analytic_score_base.parquet")
+        path_base = raiz_analytic / periodo_resuelto / "analytic_score_base.parquet"
 
     if not path_base.exists():
         raise FileNotFoundError(f"No existe {path_base}. Corre primero el módulo de transformación.")
@@ -224,7 +238,7 @@ def calcular_scoring(
     Dimensiones y variables:
         - D1 Severidad (peso `pesos['severidad']`): Tiempo_Inactividad_Meses,
           Pct_Mora_GECC_6M, Recaudo_Total_Promedio_GECC_6M,
-          Oferta_Reactivacion_Disponible, intenciones_retiro_1y.
+          intenciones_retiro_1y.
         - D2 Enganche  (peso `pesos['enganche']`): Numcantidadproductos,
           Cantidad_empresas, Valor_perseverancia_vs_ingresos, Total_Eventos,
           Valor_Capitalizado.
@@ -358,7 +372,7 @@ def categorizar_score(score: pd.Series) -> pd.Series:
 
 # ─── Orquestadora ─────────────────────────────────────────────────────────────
 
-def build_score() -> None:
+def build_score(periodo: str | None = None) -> None:
     """Orquesta el pipeline de scoring D1-D5 desde la base analítica hasta scoring.parquet.
 
     Flujo de ejecución:
@@ -366,10 +380,15 @@ def build_score() -> None:
         2. Carga orden_clv y pesos (severidad/enganche/recencia/vinculo/externo)
            desde config.yml -> scoring (ya suman 1.0).
         3. Lee las columnas necesarias de
-           ``data/analytic/analytic_score_base.parquet``.
+           ``data/analytic/{periodo}/analytic_score_base.parquet`` (el periodo
+           más reciente si no se especifica).
         4. Llama a `calcular_scoring` -> genera dimensiones D1-D5 y score_compromiso.
         5. Llama a `categorizar_score` -> genera categoria_score y persiste cortes.
         6. Exporta el DataFrame final a ``data/scoring/scoring_inactivos.parquet``.
+
+    Args:
+        periodo: Periodo (YYYYMM) a puntuar, ej. '202608'. Si es None, se toma
+            la corrida de transformación más reciente en ``data/analytic/``.
 
     Raises:
         FileNotFoundError: Si la base analítica o config.yml no existen.
@@ -382,7 +401,7 @@ def build_score() -> None:
     orden_clv = cfg["scoring"]["orden_clv"]
     pesos = cfg["scoring"]
 
-    df_scoring = xtr_columnas_necesarias()
+    df_scoring = xtr_columnas_necesarias(periodo=periodo)
 
     score = calcular_scoring(
         df=df_scoring,
