@@ -1,4 +1,32 @@
+import json
 from pathlib import Path
+
+
+def leer_cortes_scoring(cortes_path: str | None = None) -> dict:
+    """Lee los cortes Bajo/Medio/Alto persistidos por `categorizar_score`.
+
+    Solo `build_score.py` (entrenamiento, vía `categorizar_score`) calcula y
+    sobreescribe estos cortes. Todo lo demás los lee tal cual, congelados:
+    `caracterizar_score.py` (diagnóstico post-hoc de una corrida de
+    entrenamiento) y `inference.py` (etiqueta Bajo/Medio/Alto en inferencia
+    sin recalcular nada). Vive acá porque ambos módulos, que no se llaman
+    entre sí, necesitan la misma lectura.
+
+    Args:
+        cortes_path: Ruta personalizada. Si es None, usa
+            ``configs/scoring/cortes_scoring.json``.
+
+    Returns:
+        dict con claves 'bajo', 'medio', 'alto', cada una [limite_inf, limite_sup].
+
+    Raises:
+        FileNotFoundError: Si el archivo no existe.
+    """
+    path = Path(cortes_path) if cortes_path else Path.cwd() / "configs" / "scoring" / "cortes_scoring.json"
+    if not path.exists():
+        raise FileNotFoundError(f"No existe {path}. Corre primero build_score().")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def periodo_mas_cercano(path_raiz: Path, archivo_requerido: str | None = None) -> str:
