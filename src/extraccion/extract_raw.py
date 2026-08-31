@@ -891,6 +891,22 @@ def extract_raw(
             tamanio_lote=tamanio_lote, 
         )
     )
+    
+    bases.update(
+        extract_sipas(
+            inac=inac, 
+            con_bi=con_bi, 
+            tamanio_lote=tamanio_lote
+        )
+    )
+    
+    bases.update(
+        extract_pqrs(
+            inac=inac,
+            con_bi=con_bi, 
+            tamanio_lote=tamanio_lote, 
+        )
+    )
 
     bases = export_bases(bases=bases, raw_path=raw_path)
 
