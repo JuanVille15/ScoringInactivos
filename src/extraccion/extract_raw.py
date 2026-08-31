@@ -682,7 +682,69 @@ def extract_pqrs(
     )
 
     return {'pqrs':pqrs}
+
+def extract_meses_inactividad(
+    inac:pd.DataFrame, 
+    con_gcc:str, 
+    tamanio_lote:int=2_000
+) -> dict[str,pd.DataFrame]:
     
+    path_query = Path.cwd() / "sql" / "meses_inactivo.sql"
+    
+    if not path_query.exists():
+        raise FileNotFoundError(f"La consulta {path_query.name} no existe en sql/")
+    
+    base_query = path_query.read_text(encoding="utf-8", errors="coerce")
+    
+    # --- Se hacen lotes de consulta --- #
+    cedulas_str = [
+        str(c) for c in inac['ID'].unique().tolist()
+    ]
+    
+    lotes = [
+        cedulas_str[i:i+tamanio_lote] 
+        for i in range(0,len(cedulas_str),tamanio_lote)
+    ]
+    
+    # --- Se itera por cada lote de consulta --- #
+    resultados=[]
+    conn_gcc = None
+    for lot in lotes:
+        try:
+            conn_gcc = pyodbc.connect(con_gcc)
+            cedulas_consulta = ','.join(f"'{c}'" for c in lot)
+            query_lote = base_query.replace('{ids}',cedulas_consulta)
+            df_temp = pd.read_sql(sql=query_lote, 
+                                  con=conn_gcc) #type: ignore
+            resultados.append(df_temp)
+            print("Base meses Inactividad consultada...")
+        except Exception as e:
+            print('Error consultado meses Inactividad...')
+            raise
+        finally:
+            if conn_gcc is not None:
+                conn_gcc.close()
+    
+    if not resultados:
+        raise ValueError(f'No se pudo obtener resultado de meses inactividad...')
+    
+    # --- Se unen los lotes --- #
+    meses_inactividad = (
+        pd.concat(
+            resultados, 
+            axis=0, 
+            ignore_index=True
+        )
+        .astype(
+            {
+                'CEDULA':int, 
+                'Tiempo_Inactividad_Meses': 'Int64', 
+            }
+        )
+    )
+
+    return {'meses_inactividad':meses_inactividad}
+
 def leer_bases(paths_bases: dict[str, str]) -> dict[str, pd.DataFrame]:
     """
     Lee un conjunto de bases insumo desde disco a partir de un diccionario de rutas
@@ -791,6 +853,7 @@ def export_bases(bases: dict[str, pd.DataFrame], raw_path: str | None = None) ->
 
 def extract_raw(
     con_bi: str,
+    con_gcc: str,
     paths_bases: dict[str, str] | None = None,
     tamanio_lote: int = 2000,
     raw_path: str | None = None,
@@ -905,6 +968,14 @@ def extract_raw(
             inac=inac,
             con_bi=con_bi, 
             tamanio_lote=tamanio_lote, 
+        )
+    )
+    
+    bases.update(
+        extract_meses_inactividad(
+            inac=inac, 
+            con_gcc=con_gcc, 
+            tamanio_lote=tamanio_lote
         )
     )
 
