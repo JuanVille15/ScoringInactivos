@@ -1,3 +1,4 @@
+from typing import final
 import pandas as pd
 import datetime
 import pyodbc
@@ -26,6 +27,78 @@ def _id_a_str(series: pd.Series) -> pd.Series:
     """
     return pd.to_numeric(series, errors="coerce").astype("Int64").astype(str)
 
+
+def extract_inactivos(
+    con_bi:str
+) -> pd.DataFrame:
+    """
+    Consulta en BodegaCorporativa la población de asociados inactivos del mes
+    actual (día 1 del mes en curso). Reemplaza al antiguo insumo
+    `Poblacion_Inactivos.xlsx`: a diferencia de ese Excel, que podía traer
+    varios periodos a la vez, esta consulta siempre trae un único periodo (el
+    mes en curso) — por eso agrega la columna 'Periodo' (YYYYMM) al resultado,
+    igual para todas las filas, en vez de depender de que el insumo ya la
+    traiga.
+
+    Parameters
+    ----------
+    con_bi : str
+        String de conexión pyodbc a BodegaCorporativa.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columnas ID, strcodestadoclientefuente, strDescEstadoFuente, Periodo.
+
+    Raises
+    ------
+    FileNotFoundError
+        Si el archivo poblacion.sql no existe en sql/.
+    ValueError
+        Si no se obtuvo población para el periodo consultado.
+    """
+    # --- Se lee la consulta --- #
+
+    query_path = Path.cwd() / "sql" / "poblacion.sql"
+
+    if not query_path.exists():
+        raise FileNotFoundError(f'No se encontro el query: {query_path.name} dentro de sql/')
+
+    base_query = query_path.read_text(encoding='utf-8', errors='coerce')
+
+    # --- Periodo de consulta --- #
+    periodo_dt = datetime.datetime.today().replace(day=1)
+    periodo = periodo_dt.strftime('%Y-%m-%d')
+    periodo_ym = periodo_dt.strftime('%Y%m')
+
+    # --- metemos el periodo de consulta --- #
+    query_periodo = base_query.replace("'?'", f"'{periodo}'")
+
+    conn_bi = None
+    try:
+        conn_bi = pyodbc.connect(con_bi)
+        print(f'Consultando Inactivos periodo: {periodo}')
+        df = pd.read_sql(sql=query_periodo,
+                         con=conn_bi, #type:ignore
+                         dtype={
+                             'ID':int,
+                             'strcodestadoclientefuente':str,
+                             'strDescEstadoFuente':str,
+                         })
+        print(f'Consulta realizada con exito✅')
+    except Exception as e:
+        print(f'Error consultado poblacion: {e}')
+        raise
+    finally:
+        if conn_bi is not None:
+            conn_bi.close()
+
+    if len(df) == 0:
+        raise ValueError(f'No se obtuvo poblacion para el periodo: {periodo}')
+
+    df['Periodo'] = periodo_ym
+
+    return df
 
 def extract_cantidad_productos(
     inac: pd.DataFrame,
@@ -798,11 +871,20 @@ def leer_bases(paths_bases: dict[str, str]) -> dict[str, pd.DataFrame]:
     return bases
 
 
-def export_bases(bases: dict[str, pd.DataFrame], raw_path: str | None = None) -> dict[str, pd.DataFrame]:
+def export_bases(
+    bases: dict[str, pd.DataFrame],
+    periodo: str,
+    raw_path: str | None = None,
+) -> dict[str, pd.DataFrame]:
     """
     Persiste cada DataFrame del diccionario `bases` como archivo Parquet en la
-    capa raw del proyecto, incluyendo en el nombre la fecha de extracción (solo
-    fecha, sin hora ni minutos).
+    capa raw del proyecto, dentro de una carpeta con el periodo de ejecución
+    (YYYYMM), ej. data/raw/202608/cantidad_productos.parquet.
+
+    Cada corrida crea (o reutiliza) su propia carpeta `raw_path/periodo/`, así
+    que dos corridas del mismo mes se sobreescriben entre sí a propósito (la
+    carpeta representa "la última extracción de ese periodo", no un historial
+    de corridas).
 
     Itera clave/valor del diccionario, imprime la confirmación de cada
     exportación, y retorna el mismo diccionario para que el siguiente módulo
@@ -812,8 +894,11 @@ def export_bases(bases: dict[str, pd.DataFrame], raw_path: str | None = None) ->
     ----------
     bases : dict[str, pd.DataFrame]
         Diccionario {clave: DataFrame} a persistir.
+    periodo : str
+        Periodo de ejecución en formato YYYYMM (ej. '202608'). Nombra la
+        carpeta donde se persisten todas las bases de esta corrida.
     raw_path : str or None, optional
-        Ruta de salida personalizada. Si es None, exporta a data/raw/
+        Ruta base de salida personalizada. Si es None, exporta bajo data/raw/
         relativo a la raíz del proyecto.
 
     Returns
@@ -824,21 +909,19 @@ def export_bases(bases: dict[str, pd.DataFrame], raw_path: str | None = None) ->
     Note:
         Antes de escribir cada parquet, las columnas de tipo ``object`` se
         sanean a ``str`` sobre una copia (preservando los NaN). Esto es
-        necesario porque algunos insumos (ej. Excel consolidados mes a mes,
-        como `consolidado_reactivaciones`) traen columnas con tipos mezclados
-        (texto y `datetime` en la misma columna), que pyarrow no puede
-        inferir y hacen fallar `to_parquet`. El diccionario en memoria que se
-        retorna conserva los tipos originales; el saneo solo afecta al
-        archivo persistido.
+        necesario porque algunos insumos (ej. Excel consolidados mes a mes)
+        traen columnas con tipos mezclados (texto y `datetime` en la misma
+        columna), que pyarrow no puede inferir y hacen fallar `to_parquet`.
+        El diccionario en memoria que se retorna conserva los tipos
+        originales; el saneo solo afecta al archivo persistido.
     """
-    path_salida = Path(raw_path) if raw_path else Path(__file__).parents[2] / "data" / "raw"
+    path_raiz = Path(raw_path) if raw_path else Path(__file__).parents[2] / "data" / "raw"
+    path_salida = path_raiz / periodo
     path_salida.mkdir(parents=True, exist_ok=True)
 
-    fecha_extraccion = datetime.date.today().isoformat()
-
-    print("Exportando bases - raw")
+    print(f"Exportando bases - raw/{periodo}")
     for clave, df in bases.items():
-        nombre_archivo = f"{clave}_{fecha_extraccion}.parquet"
+        nombre_archivo = f"{clave}.parquet"
 
         df_export = df.copy()
         for col in df_export.select_dtypes(include="object").columns:
@@ -861,16 +944,25 @@ def extract_raw(
     """
     Orquesta el módulo de extracción raw del proyecto.
 
-    Función de entrada principal del módulo. Lee las bases insumo definidas en
-    config.yml → paths_bases (`leer_bases`, incluye 'poblacion_inactivos', 'clv',
-    'consolidado_reactivaciones', 'features_inactivos', 'enriquecimiento_360'),
-    usa 'poblacion_inactivos' para consultar en BodegaCorporativa cantidad de
-    productos (`extract_cantidad_productos`), histórico de tenencia
-    (`extract_tenencia_historica`), vista 360 (`extract_v_360`), demográfica
-    (`extract_demografica`) y facturación/recaudo GECC (`extract_fac_rec_gecc`),
-    además de leer el Excel maestro de reactivaciones históricas
-    (`extract_reactivaciones_historicas`), junta todo en un único diccionario y
-    lo persiste en raw (`export_bases`).
+    Función de entrada principal del módulo. 'poblacion_inactivos' ya no se
+    lee de Excel: sale de consultar BodegaCorporativa (`extract_inactivos`),
+    que siempre trae un único periodo (el mes en curso). Las demás bases que
+    antes venían de Excel (features_inactivos, enriquecimiento_360,
+    consolidado_reactivaciones) quedaron deprecadas por completo: sus
+    variables ya están cubiertas por consultas SQL existentes
+    (meses_inactividad, sipas, pqrs, v_360, y la CTE de intenciones_retiro_1y
+    dentro de demografica) y no se leen más — si `paths_bases` todavía las
+    trae, se ignoran. Solo 'clv' se sigue leyendo de Excel.
+
+    Con `inac` ya en mano, usa 'poblacion_inactivos' para consultar en
+    BodegaCorporativa cantidad de productos (`extract_cantidad_productos`),
+    histórico de tenencia (`extract_tenencia_historica`), vista 360
+    (`extract_v_360`), demográfica (`extract_demografica`) y
+    facturación/recaudo GECC (`extract_fac_rec_gecc`), además de leer el
+    Excel maestro de reactivaciones históricas
+    (`extract_reactivaciones_historicas`), junta todo en un único diccionario
+    y lo persiste en raw (`export_bases`), bajo una carpeta con el periodo de
+    ejecución (YYYYMM).
 
     Parameters
     ----------
@@ -878,35 +970,46 @@ def extract_raw(
         String de conexión pyodbc a BodegaCorporativa.
     paths_bases : dict[str, str] or None, optional
         Diccionario {clave: ruta_archivo} de bases insumo a leer. Si es None,
-        se toma de config.yml → paths_bases. Debe incluir la clave
-        'poblacion_inactivos' con columnas 'Cedula' y 'Periodo' (YYYYMM).
+        se toma de config.yml → paths_bases. La clave 'poblacion_inactivos',
+        si viene incluida, se ignora (siempre sale de `extract_inactivos`).
     tamanio_lote : int, optional
         Número máximo de cédulas por lote de consulta. Default 2000.
     raw_path : str or None, optional
-        Ruta de salida personalizada para la capa raw. Si es None, exporta a
-        data/raw/ relativo a la raíz del proyecto.
+        Ruta base de salida personalizada para la capa raw. Si es None,
+        exporta bajo data/raw/ relativo a la raíz del proyecto.
 
     Returns
     -------
     dict[str, pd.DataFrame]
         Diccionario {clave: DataFrame} con todas las bases del módulo
-        (poblacion_inactivos, clv, consolidado_reactivaciones,
-        features_inactivos, enriquecimiento_360, cantidad_productos,
-        tenencia_historica, v_360, demografica, reactivaciones_historicas,
-        fac_rec), ya persistidas en raw. Listo para que transformación haga
-        `base1 = bases["poblacion_inactivos"]`.
+        (poblacion_inactivos, clv, cantidad_productos, tenencia_historica,
+        v_360, demografica, reactivaciones_historicas, fac_rec, sipas, pqrs,
+        meses_inactividad), ya persistidas en raw/{periodo}/. Listo para que
+        transformación haga `base1 = bases["poblacion_inactivos"]`.
     """
     print("Iniciando extracción raw...")
 
     cfg = load_config()
-    paths_bases_resueltos: dict[str, str] = paths_bases if paths_bases is not None else cfg["paths_bases"]
+    paths_bases_resueltos: dict[str, str] = dict(
+        paths_bases if paths_bases is not None else cfg["paths_bases"]
+    )
     path_reac: str = cfg["paths"]["path_reac"]
+
+    # 'poblacion_inactivos' ya no se lee de Excel: sale de extract_inactivos (SQL).
+    paths_bases_resueltos.pop("poblacion_inactivos", None)
 
     bases = leer_bases(paths_bases=paths_bases_resueltos)
 
-    inac = bases["poblacion_inactivos"].rename(columns={"Cedula": "ID"})
+    inac = extract_inactivos(con_bi=con_bi)
     inac["ID"] = inac["ID"].astype(str)
     inac["Periodo"] = inac["Periodo"].astype(str)
+
+    periodo_ejecucion = inac["Periodo"].iloc[0]
+
+    # Se conserva la clave/forma histórica ('poblacion_inactivos' con columna
+    # 'Cedula') para no romper build_analytic_score todavía — ese ajuste queda
+    # para cuando conectemos transformación con este nuevo extract.
+    bases["poblacion_inactivos"] = inac.rename(columns={"ID": "Cedula"})
 
     bases.update(
         extract_cantidad_productos(
@@ -979,7 +1082,7 @@ def extract_raw(
         )
     )
 
-    bases = export_bases(bases=bases, raw_path=raw_path)
+    bases = export_bases(bases=bases, periodo=periodo_ejecucion, raw_path=raw_path)
 
     print("Extracción raw -- Finalizada")
 
