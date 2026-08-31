@@ -610,6 +610,79 @@ def extract_sipas(
 
     return {'sipas':sipas}
 
+def extract_pqrs(
+    inac:pd.DataFrame, 
+    con_bi:str, 
+    tamanio_lote:int=2000
+) -> dict[str,pd.DataFrame]:
+    
+    path_query = Path.cwd() / "sql" / "pqrs.sql"
+    
+    if not path_query.exists():
+        raise FileNotFoundError(f"La consulta {path_query.name} no existe en sql/")
+    
+    base_query = path_query.read_text(encoding="utf-8", errors="coerce")
+    
+    # --- Se asignan los periods de consulta --- # 
+    periodo_consulta = (
+        datetime.date.today()
+    ).strftime(format='%Y-%m-%d')
+    
+    periodo_consulta_1y = (
+        datetime.datetime
+        .strptime(periodo_consulta, '%Y-%m-%d') - relativedelta(year=1)
+    ).strftime(format='%Y-%m-%d')
+    
+    # --- Se hacen lotes de consulta --- #
+    cedulas_str = [
+        str(c) for c in inac['ID'].unique().tolist()
+    ]
+    
+    lotes = [
+        cedulas_str[i:i+tamanio_lote] 
+        for i in range(0,len(cedulas_str),tamanio_lote)
+    ]
+    
+    # --- Se itera por cada lote de consulta --- #
+    resultados=[]
+    conn_bi = None
+    for lot in lotes:
+        try:
+            conn_bi = pyodbc.connect(con_bi)
+            cedulas_consulta = ','.join(f"'{c}'" for c in lot)
+            query_lote = base_query.replace('{ids}',cedulas_consulta)
+            df_temp = pd.read_sql(sql=query_lote, 
+                                  con=conn_bi, #type: ignore
+                                  params= [periodo_consulta_1y,periodo_consulta])
+            resultados.append(df_temp)
+            print(f"Base pqrs -- Periodo: {periodo_consulta} -- Consultado")
+        except Exception as e:
+            print(f'Error consultado Base pqrs -- Periodo: {periodo_consulta}')
+            raise
+        finally:
+            if conn_bi is not None:
+                conn_bi.close()
+    
+    if not resultados:
+        raise ValueError(f'No se pudo obtener resultado PQRs --- Periodo: {periodo_consulta}')
+    
+    # --- Se unen los lotes --- #
+    pqrs = (
+        pd.concat(
+            resultados, 
+            axis=0, 
+            ignore_index=True
+        )
+        .astype(
+            {
+                'Identificacion':int, 
+                'Cantidad_pqr_ultimo_anno': 'Int64', 
+            }
+        )
+    )
+
+    return {'pqrs':pqrs}
+    
 def leer_bases(paths_bases: dict[str, str]) -> dict[str, pd.DataFrame]:
     """
     Lee un conjunto de bases insumo desde disco a partir de un diccionario de rutas

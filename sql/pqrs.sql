@@ -10,7 +10,7 @@ WITH CategoriasHomologadas AS (
 	FEC_REGISTRO
 	FROM [StageCorporativa].[Stage].[extrCRMPQRs]
 	WHERE 
-		NRO_DOCUMENTO IN ({bloque_str})
+		NRO_DOCUMENTO IN ({ids})
 		AND CATEGORIA <> 'No Tiene / No Aplica'
 		AND FEC_REGISTRO BETWEEN ? AND ?
 )
