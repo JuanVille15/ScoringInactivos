@@ -660,7 +660,7 @@ def calcular_n_usos(enriquecimiento_360: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def calcular_pqr(enriquecimiento_360: pd.DataFrame) -> pd.DataFrame:
+def calcular_pqr(pqrs: pd.DataFrame) -> pd.DataFrame:
     """Extrae la cantidad de PQR del último año (D3). Literal, sin transformación.
 
     Args:
@@ -671,7 +671,7 @@ def calcular_pqr(enriquecimiento_360: pd.DataFrame) -> pd.DataFrame:
         DataFrame con columnas ``['Id', 'Cantidad_pqr_ultimo_anno']``.
     """
     return (
-        enriquecimiento_360
+        pqrs
         .assign(Id=lambda d: _id_a_str(d["Identificacion"]))
         [["Id", "Cantidad_pqr_ultimo_anno"]]
         .drop_duplicates(subset="Id", keep="first")
@@ -790,7 +790,7 @@ def build_analytic_score(bases: dict[str, pd.DataFrame], analytic_path: str | No
         how="left", on="Id",
     )
     df = df.merge(right=calcular_turnos_oficina(bases["v_360"]), how="left", on="Id")
-    df = df.merge(right=calcular_pqr(bases["enriquecimiento_360"]), how="left", on="Id")
+    df = df.merge(right=calcular_pqr(bases["pqrs"]), how="left", on="Id")
 
     # D4 · VÍNCULO HISTÓRICO
     df = df.merge(right=calcular_cuotas_pagadas_vs_antiguedad(bases["demografica"]), how="left", on="Id")
