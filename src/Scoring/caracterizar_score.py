@@ -15,6 +15,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from src.utils.helpers import periodo_mas_cercano
+
 # Variables donde se fuerza mediana o media en 'valor_horizontal' en vez de la
 # regla automática moda/media. La regla automática (moda si varía entre grupos,
 # si no media) falla en variables continuas de alta cardinalidad: ahí la moda es
@@ -115,6 +117,7 @@ def graficar_distribucion_score(
 
 def resumen_variables_por_grupo(
     scoring_path: str | None = None,
+    periodo: str | None = None,
     analytic_path: str | None = None,
     out_path: str | None = None,
 ) -> pd.DataFrame:
@@ -127,8 +130,12 @@ def resumen_variables_por_grupo(
 
     Args:
         scoring_path: Ruta personalizada al parquet de scoring. Ver `_leer_scoring`.
-        analytic_path: Ruta personalizada al parquet de la base analítica. Si es
-            None, usa ``data/analytic/analytic_score_base.parquet``.
+        periodo: Periodo (YYYYMM) cuya base analítica leer, ej. '202608'. Si es
+            None, se toma la carpeta de periodo más reciente bajo
+            ``data/analytic/``. Se ignora si se pasa `analytic_path`.
+        analytic_path: Ruta personalizada y completa al parquet de la base
+            analítica (se usa tal cual, sin resolver periodo). Si es None, se
+            resuelve como ``data/analytic/{periodo}/analytic_score_base.parquet``.
         out_path: Ruta de salida del .csv. Si es None, usa
             ``reports/scoring/resumen_variables_por_grupo.csv``.
 
@@ -160,7 +167,13 @@ def resumen_variables_por_grupo(
         "d4_vinculo", "d5_externo", "score_compromiso", "categoria_score",
     ]]
 
-    path_analytic = Path(analytic_path) if analytic_path else Path.cwd() / "data" / "analytic" / "analytic_score_base.parquet"
+    if analytic_path is not None:
+        path_analytic = Path(analytic_path)
+    else:
+        raiz_analytic = Path.cwd() / "data" / "analytic"
+        periodo_resuelto = periodo or periodo_mas_cercano(raiz_analytic, "analytic_score_base.parquet")
+        path_analytic = raiz_analytic / periodo_resuelto / "analytic_score_base.parquet"
+
     if not path_analytic.exists():
         raise FileNotFoundError(f"No existe {path_analytic}. Corre primero build_analytic_score().")
     analytic = pd.read_parquet(path_analytic, engine="pyarrow")
@@ -268,7 +281,7 @@ def resumen_variables_por_grupo_horizontal(
 
 # ─── Orquestadora ─────────────────────────────────────────────────────────────
 
-def caracterizar_score() -> None:
+def caracterizar_score(periodo: str | None = None) -> None:
     """Orquesta el diagnóstico post-hoc del scoring: distribución + resumen por grupo.
 
     Función de entrada principal del módulo. Corre después de `build_score()`.
@@ -285,14 +298,18 @@ def caracterizar_score() -> None:
            media), exportado a
            ``reports/scoring/resumen_variables_por_grupo_horizontal.csv``.
 
+    Args:
+        periodo: Periodo (YYYYMM) cuya base analítica leer, ej. '202608'. Si es
+            None, se toma la carpeta de periodo más reciente en ``data/analytic/``.
+
     Raises:
         FileNotFoundError: Si `data/scoring/scoring_inactivos.parquet`,
-            `configs/scoring/cortes_scoring.json` o
-            `data/analytic/analytic_score_base.parquet` no existen (correr
-            primero build_analytic_score() y build_score()).
+            `configs/scoring/cortes_scoring.json` o la corrida de
+            `data/analytic/{periodo}/analytic_score_base.parquet` no existen
+            (correr primero build_analytic_score() y build_score()).
     """
     print("Caracterizando scoring...")
     graficar_distribucion_score()
-    resumen = resumen_variables_por_grupo()
+    resumen = resumen_variables_por_grupo(periodo=periodo)
     resumen_variables_por_grupo_horizontal(resumen=resumen)
     print("Caracterización -- Finalizada")
