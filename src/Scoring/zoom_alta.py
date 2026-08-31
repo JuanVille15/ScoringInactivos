@@ -1,8 +1,8 @@
 """Zoom - Mora alta
 
 Este modulo realiza un "mini-scoring" para generar una priorizacion numerica
-entre 5 variables - Oferta Disponible, NumeroProductos, Cuotas pagadas vs antiguedad,
-Saldo aportes y ValorCapitalizado posterior a eso organiza de mayor a menor por el score y genera particiones. 
+entre 4 variables - NumeroProductos, Cuotas pagadas vs antiguedad,
+Saldo aportes y ValorCapitalizado posterior a eso organiza de mayor a menor por el score y genera particiones.
 """
 import joblib
 import os
@@ -11,14 +11,21 @@ import numpy as np
 from pathlib import Path
 from typing import Literal
 from src.Scoring.build_score import clampear_percentil
+from src.utils.helpers import periodo_mas_cercano
 
-def xtr_bases(analytic_path: str | None = None, 
+def xtr_bases(periodo: str | None = None,
+             analytic_path: str | None = None,
              scoring_path: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    
+
     # --- Se extrae la base analitica --- #
-         
-    path_base = Path(analytic_path) if analytic_path else Path().cwd() /"data"/ "analytic" / "analytic_score_base.parquet"
-    
+
+    if analytic_path is not None:
+        path_base = Path(analytic_path)
+    else:
+        raiz_analytic = Path().cwd() / "data" / "analytic"
+        periodo_resuelto = periodo or periodo_mas_cercano(raiz_analytic, "analytic_score_base.parquet")
+        path_base = raiz_analytic / periodo_resuelto / "analytic_score_base.parquet"
+
     if not path_base.exists():
         raise FileNotFoundError(f'No existe {path_base}. Corre primero el modulo de transformacion')
     
@@ -207,10 +214,10 @@ def agruparzoom(df:pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def build_zoom() -> None:
-    
+def build_zoom(periodo: str | None = None) -> None:
+
     # --- 1. Se extraen bases necesarias --- #
-    features, alta = xtr_bases()
+    features, alta = xtr_bases(periodo=periodo)
     
     # --- 2. Se unen las bases ---- #
     FeaturesAlta = unir_bases(
