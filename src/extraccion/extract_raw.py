@@ -794,40 +794,41 @@ def extract_meses_inactividad(
 ) -> dict[str,pd.DataFrame]:
     
     path_query = Path.cwd() / "sql" / "meses_inactivo.sql"
-    
+
     if not path_query.exists():
         raise FileNotFoundError(f"La consulta {path_query.name} no existe en sql/")
-    
+
     base_query = path_query.read_text(encoding="utf-8", errors="coerce")
-    
+
     # --- Se hacen lotes de consulta --- #
+    tamanio_lote = min(tamanio_lote, 1000) # Oracle solo acepta 1_000 como max #
+
     cedulas_str = [
         str(c) for c in inac['ID'].unique().tolist()
     ]
-    
+
     lotes = [
-        cedulas_str[i:i+tamanio_lote] 
+        cedulas_str[i:i+tamanio_lote]
         for i in range(0,len(cedulas_str),tamanio_lote)
     ]
     
-    # --- Se itera por cada lote de consulta --- #
     resultados=[]
     conn_gcc = None
-    for lot in lotes:
-        try:
-            conn_gcc = pyodbc.connect(con_gcc)
+    try:
+        conn_gcc = pyodbc.connect(con_gcc)
+        for lot in lotes:
             cedulas_consulta = ','.join(f"'{c}'" for c in lot)
             query_lote = base_query.replace('{ids}',cedulas_consulta)
-            df_temp = pd.read_sql(sql=query_lote, 
+            df_temp = pd.read_sql(sql=query_lote,
                                   con=conn_gcc) #type: ignore
             resultados.append(df_temp)
             print("Base meses Inactividad consultada...")
-        except Exception as e:
-            print('Error consultado meses Inactividad...')
-            raise
-        finally:
-            if conn_gcc is not None:
-                conn_gcc.close()
+    except Exception as e:
+        print('Error consultado meses Inactividad...')
+        raise
+    finally:
+        if conn_gcc is not None:
+            conn_gcc.close()
     
     if not resultados:
         raise ValueError(f'No se pudo obtener resultado de meses inactividad...')
