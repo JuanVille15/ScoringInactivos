@@ -734,7 +734,7 @@ def extract_pqrs(
     
     periodo_consulta_1y = (
         datetime.datetime
-        .strptime(periodo_consulta, '%Y-%m-%d') - relativedelta(year=1)
+        .strptime(periodo_consulta, '%Y-%m-%d') - relativedelta(years=1)
     ).strftime(format='%Y-%m-%d')
     
     # --- Se hacen lotes de consulta --- #
