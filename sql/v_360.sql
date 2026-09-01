@@ -13,7 +13,7 @@ SELECT
 	Alerta_Habito_Pago_Externo AS [Alerta_Habito_Pago_Externo],
 	Alerta_Estado_Creditos_Externos AS [Alerta_Estado_Creditos_Externos],
 	Alerta_Capacidad_Pago_Externo AS [Alerta_Capacidad_Pago_Externo]
-FROM Operaciones.dbo.ConsultaIntegral360
+FROM Operaciones.dbo.ConsultaIntegral360_Diaria
 WHERE
 	Operaciones.$partition.pf_mes(dtmFechaInsercion) = Operaciones.$partition.pf_mes('?')
 	AND Identificacion IN ({ids})
