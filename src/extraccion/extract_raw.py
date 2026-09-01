@@ -67,10 +67,17 @@ def extract_inactivos(
     base_query = query_path.read_text(encoding='utf-8', errors='coerce')
 
     # --- Periodo de consulta --- #
-    periodo_dt = datetime.datetime.today().replace(day=1)
+    
+    if datetime.datetime.today().day == 1:
+        periodo_dt = (datetime.datetime.today() - relativedelta(months=1)).replace(day=1)
+        periodo_ym = (periodo_dt + relativedelta(months=1)).strftime('%Y%m')
+    else:
+        periodo_dt = datetime.datetime.today().replace(day=1)
+        periodo_ym = periodo_dt.strftime('%Y%m')
+    
+    # --- Se deja un formato fijo --- #
     periodo = periodo_dt.strftime('%Y-%m-%d')
-    periodo_ym = periodo_dt.strftime('%Y%m')
-
+    
     # --- metemos el periodo de consulta --- #
     query_periodo = base_query.replace("'?'", f"'{periodo}'")
 
