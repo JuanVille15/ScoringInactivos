@@ -657,7 +657,7 @@ def extract_sipas(
     
     # --- Se asigna el periodo de consulta --- # 
     periodo_consulta = (
-        datetime.date.today() - relativedelta(months=1)
+        datetime.date.today() - relativedelta(months=2)
     ).strftime(format='%Y-%m-%d')
     
     base_query = base_query.replace('?',periodo_consulta)
