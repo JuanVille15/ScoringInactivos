@@ -32,7 +32,7 @@ def main() -> None:
     print(f"\n[3/3] Infiriendo scoring (periodo {periodo})...")
     ejecutar_inferencia(analytic=analytic, periodo=periodo)
 
-    print("\nInferencia -- Finalizada ✅")
+    print("\nInferencia -- Finalizada")
 
 if __name__ == "__main__":
     main()
