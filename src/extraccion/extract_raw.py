@@ -263,7 +263,15 @@ def extract_v_360(
     if not df_list:
         raise ValueError("No se obtuvieron resultados. Verifica la query y los parámetros.")
 
-    return {"v_360": pd.concat(df_list, axis=0, ignore_index=True)}
+    v_360 = pd.concat(df_list, axis=0, ignore_index=True)
+
+    v_360 = v_360.astype({
+        "Valorperseverancia": "float64",
+        "Turnos_En_Oficinas_Total_Ult12Meses": "float64",
+        "Total_Eventos": "float64",
+    })
+
+    return {"v_360": v_360}
 
 
 def extract_demografica(
@@ -355,7 +363,16 @@ def extract_demografica(
     if not df_list:
         raise ValueError("No se obtuvieron resultados. Verifica la query y los parámetros.")
 
-    return {"demografica": pd.concat(df_list, axis=0, ignore_index=True)}
+    demografica = pd.concat(df_list, axis=0, ignore_index=True)
+
+    demografica = demografica.astype({
+        "Ingresos": "float64",
+        "Cuotas_canceladas_aportes": "float64",
+        "Saldoaportes": "float64",
+        "Antiguedad": "float64",
+    })
+
+    return {"demografica": demografica}
 
 def extract_tenencia_historica(
     inac: pd.DataFrame,
@@ -615,6 +632,13 @@ def extract_fac_rec_gecc(
         "Valor_Cuota_Mes": "Cuota_Mes",
         "RecaudoTotal": "Valor_Recaudado_Total",
     })
+    
+    fac_rec = fac_rec.astype({
+        "Vencido_Mes": "float64",
+        "Cuota_Mes": "float64",
+        "Recaudo_Vencido": "float64",
+        "Valor_Recaudado_Total": "float64",
+    })
 
     return {"fac_rec": fac_rec}
 
@@ -681,9 +705,9 @@ def extract_sipas(
         )
         .astype(
             {
-                'ID':int, 
-                'Valor_Capitalizado': 'Int64', 
-                'Meses_Hasta_Perseverancia': 'Int64', 
+                'ID':int,
+                'Valor_Capitalizado': 'float64',
+                'Meses_Hasta_Perseverancia': 'Int64',
             }
         )
     )
