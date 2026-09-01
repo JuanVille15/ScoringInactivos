@@ -242,4 +242,4 @@ def build_zoom(periodo: str | None = None) -> None:
     path_out.mkdir(parents=True, exist_ok=True)
     print(f"Exportado: {path_out / 'priorizacion_altaV2.xlsx'}...")
     FeaturesAlta.to_excel(path_out / "priorizacion_alta.xlsx", index=False,)
-    print('Priorizacion Correctamente Exportada ✅')
+    print('Priorizacion Correctamente Exportada')
