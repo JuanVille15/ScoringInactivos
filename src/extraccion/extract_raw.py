@@ -92,7 +92,7 @@ def extract_inactivos(
                              'strcodestadoclientefuente':str,
                              'strDescEstadoFuente':str,
                          })
-        print(f'Consulta realizada con exito✅')
+        print(f'Consulta realizada con exito')
     except Exception as e:
         print(f'Error consultado poblacion: {e}')
         raise
