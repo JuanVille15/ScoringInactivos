@@ -1,4 +1,3 @@
-
 SELECT  
 	fct.stridentificacion AS [ID], 
 	fct.strcodestadoclientefuente, 
