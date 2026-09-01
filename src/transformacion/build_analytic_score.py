@@ -383,31 +383,32 @@ def cambios_sipas(sipas:pd.DataFrame) -> pd.DataFrame:
     """Deriva `Perseverancia_Cerca` (D4) a partir de `Meses_Hasta_Perseverancia`.
 
     `bases['sipas']` trae `Meses_Hasta_Perseverancia` en crudo (puede venir
-    negativo si la fecha de perseverancia ya pasó). Se clipea a 0 antes de
-    comparar, y se marca `Perseverancia_Cerca = 1` cuando faltan 60 meses o
-    menos (5 años) para perseverar. La columna original se descarta: solo
-    interesa el indicador binario para el scoring.
+    negativo si la fecha de perseverancia ya pasó, o nulo si la cédula no
+    tiene plan básico). Se clipea a 0 antes de comparar, y se marca
+    `Perseverancia_Cerca = 1` cuando faltan 60 meses o menos (5 años) para
+    perseverar. La columna original se descarta: solo interesa el indicador
+    binario para el scoring.
 
     Args:
         sipas: DataFrame de ``bases['sipas']`` con columnas
-            ``['ID', 'Valor_Capitalizado', 'Meses_Hasta_Perseverancia']``.
+            ``['ID', 'Valor_Capitalizado', 'Meses_Hasta_Perseverancia']``
+            (esta última nullable, dtype Int64).
 
     Returns:
         DataFrame con las mismas columnas de `sipas` salvo
-        `Meses_Hasta_Perseverancia`, reemplazada por `Perseverancia_Cerca` (0/1).
+        `Meses_Hasta_Perseverancia`, reemplazada por `Perseverancia_Cerca`
+        (0/1, nullable Int64). Cédulas sin plan básico (`Meses_Hasta_
+        Perseverancia` nulo) quedan en `<NA>`, no se imputan a 0 ni a 1 —
+        mismo criterio de "no aplica" que usa `calcular_tiempo_perseverancia`.
     """
-    # --- Se calcula :Perseverancia_Cerca ---#
-
+    # --- Se calcula Perseverancia_Cerca --- #
     df = sipas.copy()
     df = (
         df
         .assign(
-            Perseverancia_Cerca = lambda df:
-                np.where(
-                    df['Meses_Hasta_Perseverancia'].clip(0) <= 60, 
-                    1, 
-                    0
-                )
+            Perseverancia_Cerca=lambda df: (
+                df['Meses_Hasta_Perseverancia'].clip(lower=0) <= 60
+            ).astype('Int64')
         )
         .drop(
             columns={
@@ -415,8 +416,8 @@ def cambios_sipas(sipas:pd.DataFrame) -> pd.DataFrame:
             }
         )
     )
-    
-    return df 
+
+    return df
     
 def calcular_promedio_fac_rec(
     df: pd.DataFrame,
@@ -678,16 +679,27 @@ def calcular_alertas_externas(v_360: pd.DataFrame) -> pd.DataFrame:
     Args:
         v_360: DataFrame de ``bases['v_360']`` con columnas
             ``['Identificacion', 'Alerta_Habito_Pago_Externo',
-            'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``
-            (0/1, sin nulos).
+            'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``.
+            En la práctica llegan como texto (ej. '0'/'1'), no numéricas — se
+            pasan por `_a_binario` igual que `Tipo_cliente_*` en
+            `calcular_cantidad_empresas`, no directo como decía antes este
+            docstring.
 
     Returns:
         DataFrame con columnas ``['Id', 'Alerta_Habito_Pago_Externo',
-        'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``.
+        'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``,
+        estas 3 últimas ya como int (0/1).
     """
+    df = v_360.assign(Id=lambda d: _id_a_str(d["Identificacion"]))
+
+    for col in [
+        "Alerta_Habito_Pago_Externo", "Alerta_Estado_Creditos_Externos",
+        "Alerta_Capacidad_Pago_Externo",
+    ]:
+        df[col] = _a_binario(df[col]).astype(int)
+
     return (
-        v_360
-        .assign(Id=lambda d: _id_a_str(d["Identificacion"]))
+        df
         [["Id", "Alerta_Habito_Pago_Externo", "Alerta_Estado_Creditos_Externos",
           "Alerta_Capacidad_Pago_Externo"]]
         .drop_duplicates(subset="Id", keep="first")
