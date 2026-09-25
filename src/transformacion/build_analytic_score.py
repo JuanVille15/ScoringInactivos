@@ -412,10 +412,14 @@ def cambios_sipas(sipas:pd.DataFrame) -> pd.DataFrame:
 
     `bases['sipas']` trae `Meses_Hasta_Perseverancia` en crudo (puede venir
     negativo si la fecha de perseverancia ya pasó, o nulo si la cédula no
-    tiene plan básico). Se clipea a 0 antes de comparar, y se marca
-    `Perseverancia_Cerca = 1` cuando faltan 60 meses o menos (5 años) para
-    perseverar. La columna original se descarta: solo interesa el indicador
-    binario para el scoring.
+    tiene plan básico). `Perseverancia_Cerca = 1` solo cuando faltan entre 0
+    y 90 meses (7.5 años) para perseverar; negativo (ya perseveró, no está
+    "cerca") o más de 90 meses -> 0. La columna original se descarta: solo
+    interesa el indicador binario para el scoring.
+
+    Ojo: hasta la versión v1 del score esta variable venía del Excel
+    `features_inactivos` con la lógica invertida (`>60` -> 1). Desde v2 se
+    usa esta definición.
 
     Args:
         sipas: DataFrame de ``bases['sipas']`` con columnas
@@ -435,8 +439,8 @@ def cambios_sipas(sipas:pd.DataFrame) -> pd.DataFrame:
         df
         .assign(
             Perseverancia_Cerca=lambda df: (
-                df['Meses_Hasta_Perseverancia'].clip(lower=0) <= 60
-            ).astype('Int64')
+                df['Meses_Hasta_Perseverancia'].between(0, 90)
+            ).astype('Int64').where(df['Meses_Hasta_Perseverancia'].notna())
         )
         .drop(
             columns={

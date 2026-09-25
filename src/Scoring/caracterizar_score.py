@@ -14,7 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from src.utils.helpers import periodo_mas_cercano, leer_cortes_scoring
+from src.utils.helpers import periodo_mas_cercano, leer_cortes_scoring, path_entrenamiento, version_scoring
 
 # Variables donde se fuerza mediana o media en 'valor_horizontal' en vez de la
 # regla automática moda/media. La regla automática (moda si varía entre grupos,
@@ -43,7 +43,7 @@ def _leer_scoring(scoring_path: str | None = None) -> pd.DataFrame:
     Raises:
         FileNotFoundError: Si el archivo no existe.
     """
-    path = Path(scoring_path) if scoring_path else Path.cwd() / "data" / "scoring" / "scoring_inactivosv2.parquet"
+    path = Path(scoring_path) if scoring_path else path_entrenamiento() / "scoring_inactivos.parquet"
     if not path.exists():
         raise FileNotFoundError(f"No existe {path}. Corre primero build_score().")
     return pd.read_parquet(path, engine="pyarrow")
@@ -86,7 +86,7 @@ def graficar_distribucion_score(
     ax.legend()
     fig.tight_layout()
 
-    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / "distribucion_scoreV2.jpg"
+    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / version_scoring() / "distribucion_score.jpg"
     path_salida.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path_salida, dpi=150)
     plt.close(fig)
@@ -204,7 +204,7 @@ def resumen_variables_por_grupo(
 
     resumen = pd.concat(filas, ignore_index=True)
 
-    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / "resumen_variables_por_grupoV2.csv"
+    path_salida = Path(out_path) if out_path else Path.cwd() / "reports" / "scoring" / version_scoring() / "resumen_variables_por_grupo.csv"
     path_salida.parent.mkdir(parents=True, exist_ok=True)
     resumen.to_csv(path_salida, index=False, encoding="utf-8")
 
@@ -252,7 +252,7 @@ def resumen_variables_por_grupo_horizontal(
 
     path_salida = (
         Path(out_path) if out_path
-        else Path.cwd() / "reports" / "scoring" / "resumen_variables_por_grupo_horizontalV2.csv"
+        else Path.cwd() / "reports" / "scoring" / version_scoring() / "resumen_variables_por_grupo_horizontal.csv"
     )
     path_salida.parent.mkdir(parents=True, exist_ok=True)
     horizontal.to_csv(path_salida, encoding="utf-8")
@@ -262,7 +262,7 @@ def resumen_variables_por_grupo_horizontal(
 
 # ─── Orquestadora ─────────────────────────────────────────────────────────────
 
-def caracterizar_score(periodo: str | None = None) -> None:
+def caracterizar_score(periodo: str | None = None, analytic_path: str | None = None) -> None:
     """Orquesta el diagnóstico post-hoc del scoring: distribución + resumen por grupo.
 
     Función de entrada principal del módulo. Corre después de `build_score()`.
@@ -291,6 +291,6 @@ def caracterizar_score(periodo: str | None = None) -> None:
     """
     print("Caracterizando scoring...")
     graficar_distribucion_score()
-    resumen = resumen_variables_por_grupo(periodo=periodo)
+    resumen = resumen_variables_por_grupo(periodo=periodo, analytic_path=analytic_path)
     resumen_variables_por_grupo_horizontal(resumen=resumen)
     print("Caracterización -- Finalizada")

@@ -14,7 +14,7 @@ def main() -> None:
 
     print("=" * 70)
     print("INFERENCE.PY -- Inferencia de scoring (D1-D5) para inactivos")
-    print("Sin reentrenar: usa los artefactos ya entrenados en models/score/")
+    print("Sin reentrenar: usa los artefactos y cortes de config.yml -> scoring.version")
     print("=" * 70)
 
     # --- 1. EXTRACCIÓN: trae todas las bases crudas necesarias para el proceso ---

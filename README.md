@@ -26,13 +26,15 @@ BodegaCorporativa (SQL Server) y GCC (Oracle).
 El pipeline vive en **dos orquestadores separados** en la raíz del repo — no
 comparten estado más allá de los archivos que uno deja para que el otro lea:
 
-- **`train.py`** — reentrena. Ajusta (`fit_transform`) los escaladores de cada
-  variable y los cortes Bajo/Medio/Alto, sobrescribiendo `models/score/*.pkl`
-  y `configs/scoring/cortes_scoring.json`. Se corre cuando se quiere que el
-  modelo "reaprenda" sobre el lote más reciente (ej. al reentrenar
-  periódicamente, o la primera vez).
-- **`inference.py`** — puntúa sin reentrenar. Carga los `.pkl` y el
-  `cortes_scoring.json` que ya existan (`.transform()`, nunca `.fit()`),
+- **`train.py`** — entrena una **versión** nueva del score. Ajusta
+  (`fit_transform`) los escaladores de cada variable y los cortes
+  Bajo/Medio/Alto de la versión de `config.yml → scoring.version`, en
+  `models/score/{version}/*.pkl` y `configs/scoring/cortes_scoring_{version}.json`.
+  Todo lo demás que produce (raw, analytic, scoring, priorización) queda en
+  `data/train/{version}/`, sin tocar lo que ya entregó la inferencia. Se niega
+  a correr si esa versión ya existe: para reentrenar se sube la versión.
+- **`inference.py`** — puntúa sin reentrenar. Carga los `.pkl` y los cortes
+  de la versión vigente (`.transform()`, nunca `.fit()`),
   separa qué cédulas de la corrida ya estaban etiquetadas en el histórico de
   qué cédulas son genuinamente nuevas, y solo esas últimas son las que de
   verdad necesitan gestión. Se corre periódicamente (ej. cada mes) usando
@@ -63,12 +65,12 @@ importan las mismas funciones — y solo divergen en la etapa de scoring.
   │ src/Scoring/          │    │ src/Scoring/inference.py  │
   │ build_score.py        │    │ ejecutar_inferencia()     │
   │ (fit_transform)        │    │ (transform, sin reajustar)│
-  │ → data/scoring/        │    │ → data/scoring/{periodo}/ │
-  │   scoring_inactivosV2  │    │   scoring_inactivos +     │
+  │ → data/train/{v}/      │    │ → data/scoring/{periodo}/ │
+  │   scoring_inactivos    │    │   scoring_inactivos +     │
   │   .parquet             │    │   scoring_nuevos_inactivos│
-  │ → models/score/*.pkl   │    │ → data/scoring/           │
+  │ → models/score/{v}/    │    │ → data/scoring/           │
   │ → configs/scoring/     │    │   scoring_inactivos.parquet│
-  │   cortes_scoring.json  │    │   (maestro, actualizado)  │
+  │   cortes_scoring_{v}   │    │   (maestro, actualizado)  │
   └──────────┬────────────┘    │ → paths.out_score/{periodo}│
              │                 │   (.xlsx, ruta compartida) │
              ▼                 └──────────┬────────────────┘
@@ -83,7 +85,7 @@ importan las mismas funciones — y solo divergen en la etapa de scoring.
   │ 5. PRIORIZACIÓN ALTA  │
   │ (entrenamiento)        │
   │ zoom_alta.build_zoom() │
-  │ → data/scoring/        │
+  │ → data/train/{v}/      │
   │   priorizacion_alta   │
   │   .xlsx                │
   └──────────────────────┘
@@ -96,8 +98,8 @@ Inactivos/
 ├── train.py                    # entry point: entrenamiento (pasos 1,2,3a,4,5)
 ├── inference.py                 # entry point: inferencia (pasos 1,2,3b)
 ├── configs/
-│   ├── config.yml               # pesos del score, rutas de insumos/salida, orden CLV
-│   └── scoring/cortes_scoring.json   # cortes Bajo/Medio/Alto (solo train.py los recalcula)
+│   ├── config.yml               # pesos, versión vigente del score, rutas, orden CLV
+│   └── scoring/cortes_scoring_{version}.json   # cortes Bajo/Medio/Alto por versión (los escribe train.py)
 ├── sql/                          # queries contra BodegaCorporativa/GCC (.sql, placeholders '?'/{ids})
 ├── src/
 │   ├── extraccion/extract_raw.py
@@ -109,18 +111,18 @@ Inactivos/
 │   │   └── zoom_alta.py          # mini-score de priorización para categoria_score == 'Alto'
 │   └── utils/
 │       ├── config.py             # load_config() -> lee configs/config.yml
-│       └── helpers.py            # periodo_mas_cercano(), leer_cortes_scoring() -- compartidos
+│       └── helpers.py            # periodo_mas_cercano(), cortes y rutas por versión -- compartidos
 ├── data/
 │   ├── Insumos/                 # único Excel fuente que queda: CLV.xlsx
-│   ├── raw/{periodo}/            # snapshots parquet de cada corrida, YYYYMM
-│   ├── analytic/{periodo}/       # base analítica (variables D1-D5 crudas, sin normalizar), YYYYMM
-│   └── scoring/
-│       ├── scoring_inactivos.parquet      # MAESTRO histórico acumulado (lo actualiza inference.py)
-│       ├── scoring_inactivosV2.parquet    # última corrida de train.py (no es el maestro)
-│       ├── priorizacion_alta.xlsx         # priorización de train.py (zoom_alta.build_zoom)
-│       └── {periodo}/                     # salidas de inference.py para esa corrida
-├── models/score/                 # MinMaxScaler/OrdinalEncoder persistidos (.pkl), uno por variable
-└── reports/scoring/              # histograma, resúmenes por categoría (diagnóstico, solo train.py)
+│   ├── raw/{periodo}/            # snapshots parquet de cada corrida de inferencia, YYYYMM
+│   ├── analytic/{periodo}/       # base analítica de inferencia (variables D1-D5 crudas), YYYYMM
+│   ├── scoring/
+│   │   ├── scoring_inactivos.parquet      # MAESTRO histórico acumulado (lo actualiza inference.py)
+│   │   └── {periodo}/                     # salidas de inference.py para esa corrida
+│   └── train/{version}/          # todo lo de un entrenamiento: raw/, analytic/,
+│                                 #   scoring_inactivos.parquet, priorizacion_alta.xlsx
+├── models/score/{version}/       # MinMaxScaler/OrdinalEncoder (.pkl) de esa versión, uno por variable
+└── reports/scoring/{version}/    # histograma, resúmenes por categoría (diagnóstico de train.py)
 ```
 
 ---
@@ -143,8 +145,8 @@ Cada dimensión es el **promedio simple** (ignorando NaN) de sus variables ya
 normalizadas a [0,1]; el score final es la combinación lineal ponderada,
 escalada a [0,100]. En entrenamiento, `categorizar_score()` corta la
 distribución en Bajo/Medio/Alto usando `media ± 0.5·std` del lote corrido y
-sobrescribe `cortes_scoring.json`; en inferencia, `etiquetar_categoria()` usa
-esos mismos cortes tal cual, sin recalcularlos.
+escribe `cortes_scoring_{version}.json`; en inferencia, `etiquetar_categoria()`
+usa los cortes de la versión vigente tal cual, sin recalcularlos.
 
 > `Oferta_Reactivacion_Disponible` (antes parte de D1) se eliminó del score:
 > ya no se consulta ni se pondera — D1 opera con 4 variables, no 5.
@@ -168,9 +170,9 @@ distribución — con dos implementaciones paralelas, una por escalador
   usada solo para `Clv`.
 
 Solo las funciones `normalizar_*` (entrenamiento) escriben en
-`models/score/` — las `inferir_*` solo leen de ahí. Si `inference.py` corre
-sin que `train.py` haya corrido antes al menos una vez, falla con
-`FileNotFoundError` explícito (no hay artefacto que cargar).
+`models/score/{version}/` — las `inferir_*` solo leen de ahí. Si la versión de
+`config.yml` no está entrenada, `inference.py` falla con `FileNotFoundError`
+explícito (no hay artefacto que cargar).
 
 ---
 
@@ -180,12 +182,33 @@ sin que `train.py` haya corrido antes al menos una vez, falla con
   BodegaCorporativa directo (tabla `factasociatividad`, estado = Inactivo) para
   el mes en curso — reemplaza al viejo `Poblacion_Inactivos.xlsx`. Cada
   corrida trae un único periodo (el mes actual), no varios a la vez.
-- **Rezago de 1 mes en el periodo de consulta**: `Numcantidadproductos`,
-  `v_360` y `demografica` se consultan en el mes *anterior* al periodo
-  objetivo de cada cédula (ej. población en 202609 → se consulta 202608).
+- **Versiones del score**: escaladores + cortes se entrenan y se usan
+  juntos, como una versión (`config.yml → scoring.version`). Cortes de una
+  versión con escaladores de otra darían categorías inconsistentes. Cada
+  fila que puntúa `inference.py` lleva la columna `version_score`.
+  - **v1**: entrenada con 202606. `Perseverancia_Cerca` venía del Excel
+    `features_inactivos` con la lógica invertida (`>60` meses → 1) y las
+    alertas de D5 de `Enrequecimiento_360.xlsx`.
+  - **v2**: entrenada con 202609 re-extraído con las fuentes corregidas
+    (360 histórica, particiones completas). `Perseverancia_Cerca = 1` si
+    faltan entre 0 y 90 meses (negativo = ya perseveró → 0; nulo = sin SIPAS).
+- **Rezago de 1 mes en el periodo de consulta, con retroceso**:
+  `Numcantidadproductos`, tenencia, `v_360`, `demografica` y factura/recaudo
+  GECC se consultan en el mes *anterior* al periodo objetivo (ej. población
+  en 202609 → se consulta 202608). BI no siempre tiene ese mes cargado el día
+  que se corre (el 1 de septiembre factura de agosto venía vacía y tenencia a
+  medias), así que `resolver_particion()` verifica antes que la partición
+  tenga al menos el 90% de las cédulas del mes previo y, si no, retrocede un
+  mes (máx. 2; si ninguna sirve, se detiene). Factura y recaudo se resuelven
+  juntas. La transformación ancla sus ventanas (promedio 6M, recencia) al
+  último mes que de verdad se extrajo (`_periodo_referencia`).
   `Distancia_ultima_reactivacion` y `Cantidad_Reactivaciones_Previas` sí usan
   el periodo objetivo tal cual, porque comparan contra el Excel maestro de
   reactivaciones, no contra BodegaCorporativa.
+- **`v_360.sql` lee de `ConsultaIntegral360` (histórica), no de
+  `ConsultaIntegral360_Diaria`**: la diaria solo guarda la última carga (el
+  mes de referencia desaparece apenas entra la siguiente) y trae
+  `Tipo_Cliente_Bancoomeva` vacío.
 - **Solo queda un insumo Excel**: `CLV.xlsx` (`config.yml → paths_bases`) y el
   Excel maestro de reactivaciones históricas (`config.yml → paths.path_reac`,
   ruta de red), usado solo para `Distancia_ultima_reactivacion` y
@@ -217,15 +240,15 @@ sin que `train.py` haya corrido antes al menos una vez, falla con
   solo por `Id` contra este archivo (sin importar el `Periodo`), y al
   terminar hace `pd.concat(maestro, nuevos)` y lo sobrescribe. Así una
   cédula que sigue inactiva mes a mes y ya se etiquetó una vez no vuelve a
-  contar como "nueva" en la corrida siguiente. Es un archivo distinto de
-  `scoring_inactivosV2.parquet` (ese sí lo pisa `train.py` en cada corrida,
-  sin acumular).
+  contar como "nueva" en la corrida siguiente. Es idempotente por periodo:
+  correr el mismo mes dos veces reemplaza las filas de ese periodo en vez de
+  duplicarlas o dejar "nuevos" vacío.
 - **`fit_transform` (entrenar) vs `transform` (inferir), ya separados a nivel
   de pipeline completo**: `build_score.py`/`train.py` reajustan los
   escaladores y los cortes en cada corrida (a propósito: es la etapa de
   entrenamiento). `inference.py` es el módulo que carga esos mismos
   artefactos y solo transforma — nunca reajusta, nunca reescribe
-  `models/score/` ni `cortes_scoring.json`. Antes de que existiera
+  `models/score/` ni los cortes. Antes de que existiera
   `inference.py`, esta separación solo existía en `zoom_alta.py`; ahora
   aplica a todo el pipeline de scoring.
 - **La priorización numérica de `zoom_alta.py` NO es 100% congelada**: dentro
@@ -236,7 +259,7 @@ sin que `train.py` haya corrido antes al menos una vez, falla con
   persistido. Es decir, el score continuo `ZoomAlta` sí es comparable entre
   corridas; el 1/2/3 final es relativo al lote de esa corrida, no un umbral
   fijo.
-- **`MinMax_oferta_reactivacion.pkl`** (en `models/score/`) es un artefacto
+- **`MinMax_oferta_reactivacion.pkl`** (en `models/score/v1/`) es un artefacto
   huérfano de una versión anterior del score — ninguna función actual lo
   carga ni lo usa. No se borró para no perder historial, pero no hace nada.
 
@@ -256,24 +279,26 @@ sin que `train.py` haya corrido antes al menos una vez, falla con
   - `path_reac` — Excel maestro de reactivaciones históricas.
   - `out_score` — carpeta de red compartida donde `inference.py` deja las
     copias en `.xlsx` para el negocio (`{out_score}/{periodo}/`).
-- Para `inference.py`: que `train.py` ya haya corrido al menos una vez (para
-  que existan `models/score/*.pkl` y `configs/scoring/cortes_scoring.json`).
+- Para `inference.py`: que la versión de `config.yml → scoring.version` ya
+  esté entrenada (que existan `models/score/{version}/*.pkl` y
+  `configs/scoring/cortes_scoring_{version}.json`).
 
 ## Cómo correr
 
-Entrenar (reajusta escaladores y cortes; correr cuando se quiera que el
-modelo reaprenda):
+Entrenar una versión nueva (subir antes `scoring.version` en `config.yml`,
+ej. `v2` → `v3`; `train.py` no pisa una versión que ya existe):
 
 ```powershell
 .venv313\Scripts\python.exe train.py
 ```
 
 Corre extracción → transformación → scoring (fit_transform) →
-caracterización → priorización de altos. Genera/actualiza `data/raw/{periodo}/`,
-`data/analytic/{periodo}/`, `data/scoring/scoring_inactivosV2.parquet`,
-`models/score/*.pkl`, `configs/scoring/cortes_scoring.json`,
-`data/scoring/priorizacion_alta.xlsx` y los reportes de diagnóstico en
-`reports/scoring/`.
+caracterización → priorización de altos. Genera `data/train/{version}/`
+(`raw/{periodo}/`, `analytic/{periodo}/`, `scoring_inactivos.parquet`,
+`priorizacion_alta.xlsx`), `models/score/{version}/*.pkl`,
+`configs/scoring/cortes_scoring_{version}.json` y los reportes de diagnóstico
+en `reports/scoring/{version}/`. Desde ese momento `inference.py` usa esa
+versión. Para volver a una anterior basta con cambiar `scoring.version`.
 
 Inferir (usa el modelo ya entrenado, sin reajustar; correr periódicamente,
 ej. cada mes):

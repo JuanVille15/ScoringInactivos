@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import OrdinalEncoder, MinMaxScaler
 from src.utils.config import load_config
-from src.utils.helpers import periodo_mas_cercano
+from src.utils.helpers import periodo_mas_cercano, path_artefactos, path_cortes, path_entrenamiento
 import joblib
 import json
 
@@ -103,7 +103,7 @@ def normalizar_categoricas(series: pd.Series, orden: list, name: str) -> pd.Seri
         pd.Series: Serie normalizada en [0, 1].
 
     Note:
-        Persiste ``OrdinalEncoder_{name}.pkl`` y ``MinMax_{name}.pkl`` en models/score/.
+        Persiste ``OrdinalEncoder_{name}.pkl`` y ``MinMax_{name}.pkl`` en models/score/{version}/.
     """
     s = series.copy()
 
@@ -117,8 +117,8 @@ def normalizar_categoricas(series: pd.Series, orden: list, name: str) -> pd.Seri
     scaler = MinMaxScaler(feature_range=(0, 1), clip=True)
     serie_normalizada = scaler.fit_transform(serie_codificada.reshape(-1, 1)).flatten()
 
-    joblib.dump(enc,    Path(f"models/score/OrdinalEncoder_{name}.pkl"))
-    joblib.dump(scaler, Path(f"models/score/MinMax_{name}.pkl"))
+    joblib.dump(enc,    path_artefactos() / f"OrdinalEncoder_{name}.pkl")
+    joblib.dump(scaler, path_artefactos() / f"MinMax_{name}.pkl")
 
     return pd.Series(serie_normalizada, index=s.index)
 
@@ -136,14 +136,14 @@ def normalizar_continua(series: pd.Series, name: str, invertir: bool = False) ->
         pd.Series: Serie normalizada en [0, 1].
 
     Note:
-        Persiste ``MinMax_{name}.pkl`` en models/score/.
+        Persiste ``MinMax_{name}.pkl`` en models/score/{version}/.
     """
     s = clampear_percentil(series)
 
     scaler = MinMaxScaler(feature_range=(0, 1), clip=True)
     s_scaled = scaler.fit_transform(s.to_numpy().reshape(-1, 1)).flatten()
 
-    joblib.dump(scaler, Path(f"models/score/MinMax_{name}.pkl"))
+    joblib.dump(scaler, path_artefactos() / f"MinMax_{name}.pkl")
 
     serie_salida = pd.Series(data=s_scaled, index=s.index)
     return 1 - serie_salida if invertir else serie_salida
@@ -161,14 +161,14 @@ def normalizar_log(series: pd.Series, name: str, invertir: bool = False) -> pd.S
         pd.Series: Serie normalizada en [0, 1].
 
     Note:
-        Persiste ``MinMax_{name}.pkl`` en models/score/, ajustado en escala logarítmica.
+        Persiste ``MinMax_{name}.pkl`` en models/score/{version}/, ajustado en escala logarítmica.
     """
     s = np.log1p(clampear_percentil(series))
 
     scaler = MinMaxScaler(feature_range=(0, 1), clip=True)
     s_scaled = scaler.fit_transform(s.to_numpy().reshape(-1, 1)).flatten()  # type: ignore
 
-    joblib.dump(scaler, Path(f"models/score/MinMax_{name}.pkl"))
+    joblib.dump(scaler, path_artefactos() / f"MinMax_{name}.pkl")
 
     serie_salida = pd.Series(data=s_scaled, index=series.index)
     return 1 - serie_salida if invertir else serie_salida
@@ -189,7 +189,7 @@ def normalizar_zero_inflated(series: pd.Series, name: str, invertir: bool = Fals
         pd.Series: Serie normalizada en [0, 1].
 
     Note:
-        Persiste ``MinMax_{name}.pkl`` en models/score/, ajustado solo sobre positivos.
+        Persiste ``MinMax_{name}.pkl`` en models/score/{version}/, ajustado solo sobre positivos.
     """
     s = series.fillna(0).copy()
 
@@ -202,7 +202,7 @@ def normalizar_zero_inflated(series: pd.Series, name: str, invertir: bool = Fals
         scaler = MinMaxScaler(feature_range=(0, 1), clip=True)
         s_pos_scaled = scaler.fit_transform(s_pos.to_numpy().reshape(-1, 1)).flatten()  # type: ignore
 
-        joblib.dump(scaler, Path(f"models/score/MinMax_{name}.pkl"))
+        joblib.dump(scaler, path_artefactos() / f"MinMax_{name}.pkl")
 
         s_norm[mask_pos] = 0.1 + s_pos_scaled * 0.9  # type: ignore[operator]
 
@@ -268,7 +268,7 @@ def calcular_scoring(
             score_compromiso en [0, 100].
 
     Note:
-        Persiste artefactos en models/score/ como efecto secundario: un
+        Persiste artefactos en models/score/{version}/ como efecto secundario: un
         MinMaxScaler por variable continua/log/zero_inflated, más OrdinalEncoder
         y MinMaxScaler para Clv. `Perseverancia_Cerca` y las 3 alertas de D5
         ya viven en {0, 1} y no generan artefacto (no se escalan).
@@ -343,7 +343,8 @@ def categorizar_score(score: pd.Series) -> pd.Series:
         pd.Series: Serie categórica con etiquetas ['Bajo', 'Medio', 'Alto'].
 
     Note:
-        Persiste ``configs/scoring/cortes_scoring.json`` como efecto secundario.
+        Persiste ``configs/scoring/cortes_scoring_{version}.json`` como efecto
+        secundario (versión vigente en config.yml -> scoring.version).
     """
     media = score.mean()
     std   = score.std()
@@ -357,11 +358,11 @@ def categorizar_score(score: pd.Series) -> pd.Series:
         "alto":  [corte_alto, 100],
     }
 
-    path_out = Path("configs/scoring")
-    path_out.mkdir(parents=True, exist_ok=True)
-    with open(path_out / "cortes_scoring.json", "w", encoding="utf-8") as f:
+    path_json = path_cortes()
+    path_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(path_json, "w", encoding="utf-8") as f:
         json.dump(particiones, f)
-    print(f"Exportado: {path_out / 'cortes_scoring.json'}")
+    print(f"Exportado: {path_json}")
 
     return pd.cut(
         score,
@@ -372,36 +373,47 @@ def categorizar_score(score: pd.Series) -> pd.Series:
 
 # ─── Orquestadora ─────────────────────────────────────────────────────────────
 
-def build_score(periodo: str | None = None) -> None:
-    """Orquesta el pipeline de scoring D1-D5 desde la base analítica hasta scoring.parquet.
+def build_score(
+    periodo: str | None = None,
+    analytic_path: str | None = None,
+    scoring_path: str | None = None,
+) -> None:
+    """Orquesta el entrenamiento del scoring D1-D5 desde la base analítica.
+
+    Entrena la versión vigente (config.yml -> scoring.version): escaladores en
+    ``models/score/{version}/`` y cortes en
+    ``configs/scoring/cortes_scoring_{version}.json``.
 
     Flujo de ejecución:
-        1. Crea ``models/score/`` si no existe.
+        1. Crea ``models/score/{version}/`` si no existe.
         2. Carga orden_clv y pesos (severidad/enganche/recencia/vinculo/externo)
            desde config.yml -> scoring (ya suman 1.0).
-        3. Lee las columnas necesarias de
-           ``data/analytic/{periodo}/analytic_score_base.parquet`` (el periodo
-           más reciente si no se especifica).
+        3. Lee las columnas necesarias de la base analítica (`analytic_path`,
+           o ``data/analytic/{periodo}/analytic_score_base.parquet``).
         4. Llama a `calcular_scoring` -> genera dimensiones D1-D5 y score_compromiso.
         5. Llama a `categorizar_score` -> genera categoria_score y persiste cortes.
-        6. Exporta el DataFrame final a ``data/scoring/scoring_inactivos.parquet``.
+        6. Exporta el DataFrame final a `scoring_path` (default
+           ``data/train/{version}/scoring_inactivos.parquet``).
 
     Args:
         periodo: Periodo (YYYYMM) a puntuar, ej. '202608'. Si es None, se toma
             la corrida de transformación más reciente en ``data/analytic/``.
+            Se ignora si se pasa `analytic_path`.
+        analytic_path: Ruta completa al parquet de la base analítica.
+        scoring_path: Ruta completa del parquet de salida.
 
     Raises:
         FileNotFoundError: Si la base analítica o config.yml no existen.
         KeyError: Si config.yml no contiene las claves esperadas bajo 'scoring'.
     """
-    Path("models/score").mkdir(parents=True, exist_ok=True)
+    path_artefactos().mkdir(parents=True, exist_ok=True)
 
     print("Importando dependencias scoring...")
     cfg = load_config()
     orden_clv = cfg["scoring"]["orden_clv"]
     pesos = cfg["scoring"]
 
-    df_scoring = xtr_columnas_necesarias(periodo=periodo)
+    df_scoring = xtr_columnas_necesarias(periodo=periodo, analytic_path=analytic_path)
 
     score = calcular_scoring(
         df=df_scoring,
@@ -411,7 +423,7 @@ def build_score(periodo: str | None = None) -> None:
 
     score["categoria_score"] = categorizar_score(score["score_compromiso"])
 
-    path_out = Path("data/scoring")
-    path_out.mkdir(parents=True, exist_ok=True)
-    score.to_parquet(path_out / "scoring_inactivosV2.parquet", index=False, engine="pyarrow")
-    print(f"Exportado: {path_out / 'scoring_inactivosv2.parquet'}")
+    path_salida = Path(scoring_path) if scoring_path else path_entrenamiento() / "scoring_inactivos.parquet"
+    path_salida.parent.mkdir(parents=True, exist_ok=True)
+    score.to_parquet(path_salida, index=False, engine="pyarrow")
+    print(f"Exportado: {path_salida}")

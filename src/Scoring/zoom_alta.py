@@ -11,7 +11,7 @@ import numpy as np
 from pathlib import Path
 from typing import Literal
 from src.Scoring.build_score import clampear_percentil
-from src.utils.helpers import periodo_mas_cercano
+from src.utils.helpers import periodo_mas_cercano, path_artefactos, path_entrenamiento
 
 def xtr_bases(periodo: str | None = None,
              analytic_path: str | None = None,
@@ -44,7 +44,7 @@ def xtr_bases(periodo: str | None = None,
     
     # --- Se extrae la base de altos --- #
     
-    path_scoring = Path(scoring_path) if scoring_path else Path().cwd() /"data"/ "scoring" / "scoring_inactivosV2.parquet"
+    path_scoring = Path(scoring_path) if scoring_path else path_entrenamiento() / "scoring_inactivos.parquet"
     
     alta = (
         pd.read_parquet(
@@ -96,7 +96,7 @@ def inferencia_continua(series: pd.Series,
         
     # --- Se importa el artifact --- #
     
-    ARTIFACTS_BASE_PATH = Path().cwd() / "models" / "score"
+    ARTIFACTS_BASE_PATH = path_artefactos()
     
     if not ARTIFACTS_BASE_PATH.exists():
         raise FileExistsError(f'La carpeta de artefactos no existe: {ARTIFACTS_BASE_PATH}')
@@ -214,10 +214,10 @@ def agruparzoom(df:pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def build_zoom(periodo: str | None = None) -> None:
+def build_zoom(periodo: str | None = None, analytic_path: str | None = None) -> None:
 
     # --- 1. Se extraen bases necesarias --- #
-    features, alta = xtr_bases(periodo=periodo)
+    features, alta = xtr_bases(periodo=periodo, analytic_path=analytic_path)
     
     # --- 2. Se unen las bases ---- #
     FeaturesAlta = unir_bases(
@@ -238,8 +238,8 @@ def build_zoom(periodo: str | None = None) -> None:
     # ==========
     # EXPORTAR
     # ==========
-    path_out = Path("data/scoring")
+    path_out = path_entrenamiento()
     path_out.mkdir(parents=True, exist_ok=True)
-    print(f"Exportado: {path_out / 'priorizacion_altaV2.xlsx'}...")
+    print(f"Exportado: {path_out / 'priorizacion_alta.xlsx'}...")
     FeaturesAlta.to_excel(path_out / "priorizacion_alta.xlsx", index=False,)
     print('Priorizacion Correctamente Exportada')

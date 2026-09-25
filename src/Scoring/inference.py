@@ -21,14 +21,15 @@ import pandas as pd
 import joblib
 
 from src.utils.config import load_config
-from src.utils.helpers import leer_cortes_scoring
+from src.utils.helpers import leer_cortes_scoring, path_artefactos, version_scoring
 from src.Scoring.build_score import clampear_percentil, score_dimension
 from src.Scoring.zoom_alta import unir_bases, zoom, agruparzoom
 
 # ─── Carga de artefactos ya entrenados ─────────────────────────────────────────
 
 def _cargar_artefacto(nombre: str, prefijo: str = "MinMax"):
-    """Carga un artefacto ya entrenado (escalador u encoder) de models/score/.
+    """Carga un artefacto ya entrenado (escalador u encoder) de la versión
+    vigente del score: models/score/{version}/ (config.yml -> scoring.version).
 
     Args:
         nombre: Nombre de la variable (ej. 'saldo' -> MinMax_saldo.pkl).
@@ -42,11 +43,11 @@ def _cargar_artefacto(nombre: str, prefijo: str = "MinMax"):
             entrena nada, así que hay que correr train.py (build_score) al
             menos una vez antes.
     """
-    path = Path("models/score") / f"{prefijo}_{nombre}.pkl"
+    path = path_artefactos() / f"{prefijo}_{nombre}.pkl"
     if not path.exists():
         raise FileNotFoundError(
-            f"No existe el artefacto entrenado {path}. Corre primero train.py "
-            "(build_score) al menos una vez para generarlo."
+            f"No existe el artefacto entrenado {path}. Revisa scoring.version en "
+            "config.yml o corre train.py para entrenar esa versión."
         )
     return joblib.load(path)
 
@@ -414,7 +415,8 @@ def ejecutar_inferencia(
         FileNotFoundError: Si falta algún artefacto en models/score/ o el
             json de cortes (correr primero train.py).
     """
-    print(f"[inference] Puntuando periodo {periodo} -- {len(analytic):,} cédulas...")
+    version = version_scoring()
+    print(f"[inference] Puntuando periodo {periodo} -- {len(analytic):,} cédulas -- score {version}...")
 
     cfg = load_config()
     orden_clv = cfg["scoring"]["orden_clv"]
@@ -422,8 +424,12 @@ def ejecutar_inferencia(
 
     score = inferir_scoring(analytic, orden_clv, pesos)
 
-    cortes = leer_cortes_scoring()
+    cortes = leer_cortes_scoring(version=version)
+    print(f"[inference] Cortes {version}: {cortes}")
     score["categoria_score"] = etiquetar_categoria(score["score_compromiso"], cortes)
+    # Qué versión (escaladores + cortes) etiquetó cada fila: el maestro acumula
+    # corridas de meses distintos y puede mezclar versiones.
+    score["version_score"] = version
 
     raiz_scoring = Path(scoring_root) if scoring_root else Path("data/scoring")
     path_maestro = raiz_scoring / "scoring_inactivos.parquet"
