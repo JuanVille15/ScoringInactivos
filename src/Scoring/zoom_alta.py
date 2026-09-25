@@ -5,13 +5,16 @@ entre 4 variables - NumeroProductos, Cuotas pagadas vs antiguedad,
 Saldo aportes y ValorCapitalizado posterior a eso organiza de mayor a menor por el score y genera particiones.
 """
 import joblib
+import json
 import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Literal
 from src.Scoring.build_score import clampear_percentil
-from src.utils.helpers import periodo_mas_cercano, path_artefactos, path_entrenamiento
+from src.utils.helpers import (
+    periodo_mas_cercano, path_artefactos, path_entrenamiento, path_cortes_zoom, leer_cortes_zoom,
+)
 
 def xtr_bases(periodo: str | None = None,
              analytic_path: str | None = None,
@@ -188,15 +191,50 @@ def zoom(
     
     return df
 
-def agruparzoom(df:pd.DataFrame) -> pd.DataFrame:
-    
-    # --- Se genera particiones por cuantiles --- #
-    
+def entrenar_cortes_zoom(zoom_alta: pd.Series) -> list[float]:
+    """Calcula los terciles de ZoomAlta sobre las cédulas Alto del lote de
+    entrenamiento y los persiste en ``configs/scoring/cortes_zoom_{version}.json``.
+
+    Misma metodología que los cortes del score: se calculan una sola vez al
+    entrenar y en inferencia se aplican congelados, para que la prioridad
+    1/2/3 de una cédula sea comparable entre corridas (antes `pd.qcut` se
+    recalculaba en cada corrida y era relativo a ese lote).
+
+    Args:
+        zoom_alta: Serie ZoomAlta de las cédulas Alto del entrenamiento.
+
+    Returns:
+        Los 2 cortes interiores [tercil_1, tercil_2].
+    """
+    _, bins = pd.qcut(x=zoom_alta, q=3, retbins=True)
+    cortes = [float(bins[1]), float(bins[2])]
+
+    path_json = path_cortes_zoom()
+    path_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(path_json, "w", encoding="utf-8") as f:
+        json.dump({"cortes": cortes}, f)
+    print(f"Exportado: {path_json} -- {cortes}")
+
+    return cortes
+
+
+def agruparzoom(df:pd.DataFrame, cortes: list[float] | None = None) -> pd.DataFrame:
+    """Asigna PriorizacionNumerica (1 = más prioritario) con cortes congelados.
+
+    Args:
+        df: DataFrame con la columna 'ZoomAlta'.
+        cortes: [tercil_1, tercil_2]. Si es None, se leen los de la versión
+            vigente (`leer_cortes_zoom`) — el caso de inferencia.
+    """
+    cortes = cortes if cortes is not None else leer_cortes_zoom()
+
+    # --- Se particiona con los terciles del entrenamiento --- #
+    # Intervalos cerrados a la derecha, igual que pd.qcut.
     df['PriorizacionNumerica'] = (
-        pd.qcut(
-            x= df['ZoomAlta'], 
-            q=3, 
-            labels=[3,2,1], 
+        pd.cut(
+            x= df['ZoomAlta'],
+            bins=[-np.inf, cortes[0], cortes[1], np.inf],
+            labels=[3,2,1],
         )
     )
     
@@ -230,9 +268,11 @@ def build_zoom(periodo: str | None = None, analytic_path: str | None = None) -> 
         df=FeaturesAlta, 
     )
     
-    # --- 4. Se genera priorizacion numerica --- #
+    # --- 4. Se entrenan los terciles y se genera priorizacion numerica --- #
+    cortes = entrenar_cortes_zoom(FeaturesAlta['ZoomAlta'])
     FeaturesAlta = agruparzoom(
-        df=FeaturesAlta, 
+        df=FeaturesAlta,
+        cortes=cortes,
     )
     
     # ==========

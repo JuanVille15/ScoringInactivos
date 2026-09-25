@@ -29,6 +29,25 @@ def path_cortes(version: str | None = None) -> Path:
     return Path.cwd() / "configs" / "scoring" / f"cortes_scoring_{version or version_scoring()}.json"
 
 
+def path_cortes_zoom(version: str | None = None) -> Path:
+    """json de terciles de la priorización Alto (zoom) de una versión:
+    ``configs/scoring/cortes_zoom_{version}.json``."""
+    return Path.cwd() / "configs" / "scoring" / f"cortes_zoom_{version or version_scoring()}.json"
+
+
+def leer_cortes_zoom(version: str | None = None) -> list[float]:
+    """Lee los 2 cortes de ZoomAlta (entre prioridad 3|2 y 2|1) de una versión.
+
+    Raises:
+        FileNotFoundError: Si esa versión no tiene cortes de zoom entrenados.
+    """
+    path = path_cortes_zoom(version)
+    if not path.exists():
+        raise FileNotFoundError(f"No existe {path}. Corre primero train.py para esa versión.")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)["cortes"]
+
+
 def path_entrenamiento(version: str | None = None) -> Path:
     """Carpeta con todo lo que produce un entrenamiento (raw, analytic,
     scoring, priorización): ``data/train/{version}/``. Separada de

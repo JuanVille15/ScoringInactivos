@@ -268,9 +268,10 @@ def separar_nuevos(score: pd.DataFrame, path_maestro: Path) -> tuple[pd.DataFram
 def priorizar_alta(score: pd.DataFrame, analytic: pd.DataFrame) -> pd.DataFrame:
     """Prioriza numéricamente a las cédulas categoría Alto de esta corrida.
 
-    Reusa zoom_alta.py tal cual: `zoom()` ahí adentro ya es transform-only
-    (`inferencia_continua` carga y aplica los artefactos ya entrenados, no
-    reentrena), así que no hay nada que adaptar. Se aplica a TODAS las
+    Reusa zoom_alta.py tal cual: `zoom()` es transform-only
+    (`inferencia_continua` carga los escaladores de la versión vigente) y
+    `agruparzoom()` sin `cortes` aplica los terciles congelados de esa versión
+    (`cortes_zoom_{version}.json`), no los recalcula. Se aplica a TODAS las
     cédulas Alto de esta corrida (no solo a las nuevas): la priorización es
     "a quién contactar ya", independiente de si la cédula ya se había
     etiquetado en una corrida anterior.

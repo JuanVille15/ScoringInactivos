@@ -251,14 +251,15 @@ explícito (no hay artefacto que cargar).
   `models/score/` ni los cortes. Antes de que existiera
   `inference.py`, esta separación solo existía en `zoom_alta.py`; ahora
   aplica a todo el pipeline de scoring.
-- **La priorización numérica de `zoom_alta.py` NO es 100% congelada**: dentro
-  de `zoom()`, las 4 variables sí pasan por escaladores ya entrenados
-  (`.transform()`, nunca se reajustan). Pero `agruparzoom()` arma
-  `PriorizacionNumerica` con `pd.qcut` (terciles) calculado **en el momento,
-  sobre el lote de cédulas Alto de esa corrida puntual** — no hay un corte
-  persistido. Es decir, el score continuo `ZoomAlta` sí es comparable entre
-  corridas; el 1/2/3 final es relativo al lote de esa corrida, no un umbral
-  fijo.
+- **La priorización numérica de `zoom_alta.py` sigue la misma metodología
+  que el score**: `zoom()` usa los escaladores de la versión vigente, y los
+  terciles de `ZoomAlta` que separan prioridad 1/2/3 se calculan una sola vez
+  en `train.py` (`entrenar_cortes_zoom`, sobre las Alto del lote de
+  entrenamiento) y se guardan en `configs/scoring/cortes_zoom_{version}.json`.
+  En inferencia `agruparzoom()` los aplica congelados, así que la prioridad es
+  comparable entre corridas (ya no hay terciles exactos de 1/3 en cada lote).
+  Los de v1 se reconstruyeron de la priorización de junio (reproducen el
+  100% de sus asignaciones).
 - **`MinMax_oferta_reactivacion.pkl`** (en `models/score/v1/`) es un artefacto
   huérfano de una versión anterior del score — ninguna función actual lo
   carga ni lo usa. No se borró para no perder historial, pero no hace nada.
@@ -327,10 +328,6 @@ esta corrida), `data/scoring/{periodo}/scoring_nuevos_inactivos.parquet`
   marcar como "nueva" prácticamente toda la población inactiva del mes en
   curso. Es esperado, no un bug: de ahí en adelante el maestro ya empieza a
   filtrar de verdad.
-- `PriorizacionNumerica` (salida de `zoom_alta.py`, usada tanto por
-  `train.py` como por `inference.py`) es relativa al lote de cédulas Alto de
-  cada corrida (`pd.qcut`, sin persistir), no un corte fijo entre corridas —
-  ver la nota en Decisiones clave.
 - No hay todavía un mecanismo de reentrenamiento automático/periódico: correr
   `train.py` es una acción manual y deliberada, no algo que dispare
   `inference.py` por su cuenta.
