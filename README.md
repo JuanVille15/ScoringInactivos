@@ -169,6 +169,12 @@ distribución — con dos implementaciones paralelas, una por escalador
 - `normalizar_categoricas` / `inferir_categoricas` — `OrdinalEncoder` + MinMax,
   usada solo para `Clv`.
 
+El recorte a percentiles [5,95] (`clampear_percentil`) solo se calcula al
+entrenar. Al inferir (y en el zoom, que solo transforma) se recorta con los
+límites que quedaron guardados en el escalador, `recortar_a_entrenamiento`,
+no con los percentiles del lote: si no, el score de una cédula dependería de
+cómo vino el resto del mes.
+
 Solo las funciones `normalizar_*` (entrenamiento) escriben en
 `models/score/{version}/` — las `inferir_*` solo leen de ahí. Si la versión de
 `config.yml` no está entrenada, `inference.py` falla con `FileNotFoundError`

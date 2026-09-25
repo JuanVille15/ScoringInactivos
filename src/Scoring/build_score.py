@@ -88,6 +88,30 @@ def clampear_percentil(series: pd.Series, p_low: int = 5, p_high: int = 95) -> p
     return series.clip(lower=low, upper=high)
 
 
+def recortar_a_entrenamiento(series: pd.Series, scaler, log: bool = False) -> pd.Series:
+    """Recorta una serie al rango [p5, p95] del ENTRENAMIENTO, no del lote.
+
+    En entrenamiento, `clampear_percentil` recorta con los percentiles del
+    lote y el MinMaxScaler se ajusta sobre eso, así que su data_min_/data_max_
+    son justamente el p5/p95 del entrenamiento. En inferencia hay que usar
+    esos mismos límites: recortar con los percentiles del lote que se está
+    puntuando haría que el score de una cédula dependiera de cómo vino el
+    resto del mes (ej. si el p95 de ese mes es menor, las cédulas altas
+    quedan topadas más abajo que en entrenamiento).
+
+    Args:
+        series: Serie en unidades originales.
+        scaler: MinMaxScaler ya entrenado de esa variable.
+        log: True si el escalador se ajustó sobre log1p (sus límites están en
+            escala log y se devuelven a unidades originales con expm1).
+    """
+    bajo, alto = float(scaler.data_min_[0]), float(scaler.data_max_[0])
+    if log:
+        bajo, alto = float(np.expm1(bajo)), float(np.expm1(alto))
+    # float64: columnas Int64 (ej. conteos de PQR) no aceptan un límite decimal en clip.
+    return series.astype("float64").clip(lower=bajo, upper=alto)
+
+
 def normalizar_categoricas(series: pd.Series, orden: list, name: str) -> pd.Series:
     """Codifica una variable ordinal categórica al rango continuo [0, 1].
 

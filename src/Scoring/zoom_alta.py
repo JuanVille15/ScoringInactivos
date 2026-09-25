@@ -11,7 +11,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Literal
-from src.Scoring.build_score import clampear_percentil
+from src.Scoring.build_score import recortar_a_entrenamiento
 from src.utils.helpers import (
     periodo_mas_cercano, path_artefactos, path_entrenamiento, path_cortes_zoom, leer_cortes_zoom,
 )
@@ -90,13 +90,6 @@ def inferencia_continua(series: pd.Series,
                         invertir: bool = False, 
                         kind: Literal['Continua','log'] = 'Continua') -> pd.Series:
     
-    # --- Se camplea la variable --- # 
-    
-    if kind == 'log':
-        s = pd.Series(np.log1p(clampear_percentil(series)))
-    else:
-        s = clampear_percentil(series)
-        
     # --- Se importa el artifact --- #
     
     ARTIFACTS_BASE_PATH = path_artefactos()
@@ -117,7 +110,16 @@ def inferencia_continua(series: pd.Series,
     except Exception as e:
         print(f'Error Cargando Artefacto: {artifact} - {e}')
         raise e
-    
+
+    # --- Se recorta con los límites del ENTRENAMIENTO (no del lote) --- #
+    # Ver `recortar_a_entrenamiento`: los percentiles del lote harían que la
+    # prioridad de una cédula dependiera de cómo vino el resto del mes.
+
+    if kind == 'log':
+        s = pd.Series(np.log1p(recortar_a_entrenamiento(series, scaler, log=True)))
+    else:
+        s = recortar_a_entrenamiento(series, scaler)
+
     # --- Se genera la inferencia --- #
     try:
         serie_normalizada = scaler.transform(s.to_numpy().reshape(-1,1)).flatten()

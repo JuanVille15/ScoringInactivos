@@ -22,7 +22,7 @@ import joblib
 
 from src.utils.config import load_config
 from src.utils.helpers import leer_cortes_scoring, path_artefactos, version_scoring
-from src.Scoring.build_score import clampear_percentil, score_dimension
+from src.Scoring.build_score import recortar_a_entrenamiento, score_dimension
 from src.Scoring.zoom_alta import unir_bases, zoom, agruparzoom
 
 # ─── Carga de artefactos ya entrenados ─────────────────────────────────────────
@@ -57,33 +57,36 @@ def _cargar_artefacto(nombre: str, prefijo: str = "MinMax"):
 # build_score.py, cambiando fit_transform+dump por cargar+transform.
 
 def inferir_continua(series: pd.Series, name: str, invertir: bool = False) -> pd.Series:
-    """Ver `normalizar_continua` en build_score.py — misma lógica, sin reajustar."""
-    s = clampear_percentil(series)
+    """Ver `normalizar_continua` en build_score.py — misma lógica, sin reajustar
+    (recorte con los límites del entrenamiento, ver `recortar_a_entrenamiento`)."""
     scaler = _cargar_artefacto(name)
+    s = recortar_a_entrenamiento(series, scaler)
     s_scaled = scaler.transform(s.to_numpy().reshape(-1, 1)).flatten()
     serie_salida = pd.Series(data=s_scaled, index=s.index)
     return 1 - serie_salida if invertir else serie_salida
 
 
 def inferir_log(series: pd.Series, name: str, invertir: bool = False) -> pd.Series:
-    """Ver `normalizar_log` en build_score.py — misma lógica, sin reajustar."""
-    s = np.log1p(clampear_percentil(series))
+    """Ver `normalizar_log` en build_score.py — misma lógica, sin reajustar
+    (recorte con los límites del entrenamiento, ver `recortar_a_entrenamiento`)."""
     scaler = _cargar_artefacto(name)
+    s = np.log1p(recortar_a_entrenamiento(series, scaler, log=True))
     s_scaled = scaler.transform(s.to_numpy().reshape(-1, 1)).flatten()  # type: ignore
     serie_salida = pd.Series(data=s_scaled, index=series.index)
     return 1 - serie_salida if invertir else serie_salida
 
 
 def inferir_zero_inflated(series: pd.Series, name: str, invertir: bool = False) -> pd.Series:
-    """Ver `normalizar_zero_inflated` en build_score.py — misma lógica, sin reajustar."""
+    """Ver `normalizar_zero_inflated` en build_score.py — misma lógica, sin reajustar
+    (recorte con los límites del entrenamiento, ver `recortar_a_entrenamiento`)."""
     s = series.fillna(0).copy()
 
     mask_pos = s > 0
     s_norm = pd.Series(0.0, index=s.index)
 
     if mask_pos.sum() > 0:
-        s_pos = np.log1p(clampear_percentil(s[mask_pos]))
         scaler = _cargar_artefacto(name)
+        s_pos = np.log1p(recortar_a_entrenamiento(s[mask_pos], scaler, log=True))
         s_pos_scaled = scaler.transform(s_pos.to_numpy().reshape(-1, 1)).flatten()  # type: ignore
         s_norm[mask_pos] = 0.1 + s_pos_scaled * 0.9  # type: ignore[operator]
 
