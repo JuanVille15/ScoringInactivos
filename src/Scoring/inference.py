@@ -225,28 +225,39 @@ def separar_nuevos(score: pd.DataFrame, path_maestro: Path) -> tuple[pd.DataFram
     como nueva, aunque su Periodo cambie en cada corrida — así es como se
     evita reprocesarla en la corrida del mes siguiente.
 
+    Idempotente por periodo: solo cuentan como "ya etiquetadas" las cédulas
+    del maestro con Periodo ANTERIOR al de esta corrida, y las filas que el
+    maestro ya tuviera del periodo actual (de una corrida previa del mismo
+    mes) se reemplazan, no se suman. Así correr el mismo mes varias veces da
+    siempre los mismos nuevos, en vez de dejar el archivo vacío la segunda vez.
+
     Args:
         score: Población completa puntuada en esta corrida (salida de
-            `inferir_scoring` + `etiquetar_categoria`).
+            `inferir_scoring` + `etiquetar_categoria`). Un único Periodo.
         path_maestro: Ruta al parquet maestro histórico
             (data/scoring/scoring_inactivos.parquet). Si no existe todavía
             (primera corrida), se trata como vacío: toda `score` es "nueva".
 
     Returns:
         (nuevos, maestro_actualizado): `nuevos` es el subconjunto de `score`
-        con Id no presente en el maestro; `maestro_actualizado` es el maestro
-        original con `nuevos` ya appendeado (pd.concat), listo para persistir
-        de vuelta en `path_maestro`.
+        con Id no presente en el maestro en periodos anteriores;
+        `maestro_actualizado` es el maestro sin las filas del periodo actual,
+        con `nuevos` appendeado, listo para persistir en `path_maestro`.
     """
+    periodo = str(score["Periodo"].iloc[0])
+
     if path_maestro.exists():
         maestro = pd.read_parquet(path_maestro, engine="pyarrow")
-        ids_ya_etiquetados = set(maestro["Id"].astype(str))
+        maestro_otros = maestro[maestro["Periodo"].astype(str) != periodo]
+        ids_ya_etiquetados = set(
+            maestro_otros.loc[maestro_otros["Periodo"].astype(str) < periodo, "Id"].astype(str)
+        )
     else:
-        maestro = pd.DataFrame(columns=score.columns)
+        maestro_otros = pd.DataFrame(columns=score.columns)
         ids_ya_etiquetados = set()
 
     nuevos = score[~score["Id"].astype(str).isin(ids_ya_etiquetados)].copy()
-    maestro_actualizado = pd.concat([maestro, nuevos], ignore_index=True)
+    maestro_actualizado = pd.concat([maestro_otros, nuevos], ignore_index=True)
 
     return nuevos, maestro_actualizado
 

@@ -82,6 +82,35 @@ def _a_binario(series: pd.Series) -> pd.Series:
     return series.map(mapa).fillna(False).astype(bool)
 
 
+def _periodo_referencia(periodos_objetivo: pd.Series, periodos_insumo: pd.Series) -> pd.Series:
+    """Mes de referencia real de cada Periodo objetivo: el último periodo que
+    trae el insumo, estrictamente anterior al objetivo.
+
+    Normalmente es Periodo - 1 mes, pero la extracción puede haber retrocedido
+    si BI no tenía ese mes completo (`resolver_particion` en extract_raw). Anclar
+    las ventanas a lo que de verdad se extrajo evita que un retroceso deje un
+    mes de menos en la ventana (o sume un mes de más a la recencia).
+
+    Args:
+        periodos_objetivo: Periodos objetivo (YYYYMM) de la población.
+        periodos_insumo: Periodos (YYYYMM) presentes en el insumo histórico.
+
+    Returns:
+        Serie alineada con `periodos_objetivo` con el periodo de referencia
+        (YYYYMM, str). Si el insumo no trae ningún mes anterior al objetivo,
+        cae en Periodo - 1 mes.
+    """
+    disponibles = sorted(set(periodos_insumo.dropna().astype(str)))
+
+    def _ref(objetivo: str) -> str:
+        previos = [p for p in disponibles if p < objetivo]
+        if previos:
+            return previos[-1]
+        return (pd.to_datetime(objetivo, format="%Y%m") - pd.DateOffset(months=1)).strftime("%Y%m")
+
+    return periodos_objetivo.astype(str).map({p: _ref(p) for p in periodos_objetivo.astype(str).unique()})
+
+
 def calcular_numcantidadproductos(cantidad_productos: pd.DataFrame) -> pd.DataFrame:
     """Extrae el snapshot puntual de tenencia de productos (D2).
 
@@ -293,8 +322,9 @@ def calcular_recencia_ultimo_producto(
 
     Detecta incrementos consecutivos de ``Numcantidadproductos`` dentro de la
     ventana histórica de 12 meses (ya delimitada en la extracción) y calcula
-    la distancia en meses desde el periodo de referencia (mes anterior al
-    periodo objetivo, el mismo que usa `extract_tenencia_historica`) hasta la
+    la distancia en meses desde el periodo de referencia (el último mes que
+    trae `tenencia_historica`: normalmente el anterior al objetivo, o uno más
+    atrás si la extracción retrocedió — ver `_periodo_referencia`) hasta la
     última mejora detectada.
 
     Args:
@@ -320,9 +350,7 @@ def calcular_recencia_ultimo_producto(
     )
 
     df = poblacion[["Id", "Periodo"]].drop_duplicates(subset="Id").copy()
-    df["Periodo_referencia"] = (
-        pd.to_datetime(df["Periodo"], format="%Y%m") - pd.DateOffset(months=1)
-    ).dt.strftime("%Y%m")
+    df["Periodo_referencia"] = _periodo_referencia(df["Periodo"], tenencia_historica["Periodo"])
     df = df.merge(right=ultima_mejora, how="left", on="Id")
 
     df["Recencia_ultimo_producto"] = (
@@ -428,7 +456,10 @@ def calcular_promedio_fac_rec(
     """Calcula recaudo y factura promedio de los últimos `meses` meses (D4).
 
     Ventana retrospectiva única de `meses` meses sobre el histórico de
-    facturación/recaudo (``bases['fac_rec']``). Versión simplificada: a
+    facturación/recaudo (``bases['fac_rec']``), terminando (inclusive) en el
+    último mes extraído antes del Periodo objetivo (`_periodo_referencia`) —
+    si la extracción retrocedió un mes, la ventana retrocede con ella en vez
+    de quedarse con un mes de menos. Versión simplificada: a
     diferencia de una ventana móvil genérica multi-métrica, solo conserva
     recaudo y factura promedio para una única fuente/ventana.
 
@@ -476,14 +507,18 @@ def calcular_promedio_fac_rec(
     fac_rec = fac_rec.rename(columns={"Periodo": "Periodo_Insumo"}).assign(Id=lambda d: _id_a_str(d["Id"]))
 
     df_merge = df.merge(right=fac_rec, how="left", on="Id")
-    df_merge["Periodo_dt"] = pd.to_datetime(df_merge["Periodo"].astype(str), format="%Y%m")
+    # La ventana termina en el último mes que de verdad se extrajo (normalmente
+    # Periodo - 1; antes si la extracción retrocedió) e incluye `meses` meses.
+    df_merge["Referencia_dt"] = pd.to_datetime(
+        _periodo_referencia(df_merge["Periodo"], fac_rec["Periodo_Insumo"]), format="%Y%m"
+    )
     df_merge["Periodo_Insumo_dt"] = pd.to_datetime(df_merge["Periodo_Insumo"].astype(str), format="%Y%m")
 
     ventana = df_merge[
         df_merge["Periodo_Insumo_dt"].between(
-            df_merge["Periodo_dt"] - pd.DateOffset(months=meses),  # type: ignore[operator]
-            df_merge["Periodo_dt"],
-            inclusive="left",
+            df_merge["Referencia_dt"] - pd.DateOffset(months=meses - 1),  # type: ignore[operator]
+            df_merge["Referencia_dt"],
+            inclusive="both",
         )
     ].copy()
 
@@ -680,15 +715,13 @@ def calcular_alertas_externas(v_360: pd.DataFrame) -> pd.DataFrame:
         v_360: DataFrame de ``bases['v_360']`` con columnas
             ``['Identificacion', 'Alerta_Habito_Pago_Externo',
             'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``.
-            En la práctica llegan como texto (ej. '0'/'1'), no numéricas — se
-            pasan por `_a_binario` igual que `Tipo_cliente_*` en
-            `calcular_cantidad_empresas`, no directo como decía antes este
-            docstring.
+            Llegan como texto: 'Con alerta', 'Sin alerta' o 'Sin información'.
 
     Returns:
         DataFrame con columnas ``['Id', 'Alerta_Habito_Pago_Externo',
         'Alerta_Estado_Creditos_Externos', 'Alerta_Capacidad_Pago_Externo']``,
-        estas 3 últimas ya como int (0/1).
+        estas 3 últimas ya como int: 1 = 'Con alerta'; 'Sin alerta',
+        'Sin información' y nulos = 0 (sin alerta, igual que en entrenamiento).
     """
     df = v_360.assign(Id=lambda d: _id_a_str(d["Identificacion"]))
 
@@ -696,7 +729,12 @@ def calcular_alertas_externas(v_360: pd.DataFrame) -> pd.DataFrame:
         "Alerta_Habito_Pago_Externo", "Alerta_Estado_Creditos_Externos",
         "Alerta_Capacidad_Pago_Externo",
     ]:
-        df[col] = _a_binario(df[col]).astype(int)
+        # Valores reales: 'Con alerta' / 'Sin alerta' / 'Sin información'.
+        # Solo 'Con alerta' = 1. 'Sin información' y nulos = 0 (sin alerta),
+        # igual que en entrenamiento -- suma positivo en D5 (1 - alerta).
+        df[col] = (
+            df[col].astype(str).str.strip().str.lower().str.startswith("con alerta")
+        ).astype(int)
 
     return (
         df

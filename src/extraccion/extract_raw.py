@@ -28,6 +28,109 @@ def _id_a_str(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce").astype("Int64").astype(str)
 
 
+# ─── Disponibilidad de particiones en BI ──────────────────────────────────────
+# Conteo de cédulas distintas en UNA partición mensual completa (no solo las de
+# la población: recaudo, por ejemplo, solo cruza ~5% de los inactivos, así que
+# contar sobre la población no dice si la partición cargó o no). '?' se
+# reemplaza por la fecha de la partición (YYYY-MM-01).
+_CONTEO_PARTICION: dict[str, str] = {
+    "v_360": """
+        SELECT COUNT(DISTINCT Identificacion) AS n
+        FROM Operaciones.dbo.ConsultaIntegral360
+        WHERE Operaciones.$partition.pf_mes(dtmFechaInsercion) = Operaciones.$partition.pf_mes('?')""",
+    "tenencia": """
+        SELECT COUNT(DISTINCT strIdentificacion) AS n
+        FROM BodegaCorporativa.bodega.factTenenciaProductos
+        WHERE BodegaCorporativa.$partition.pf_mes(dtmFechaInsercion) = BodegaCorporativa.$partition.pf_mes('?')
+            AND indTenencia = 1""",
+    "demografica": """
+        SELECT COUNT(DISTINCT Documento) AS n
+        FROM BodegaCorporativa.Conocimiento.v_Demografica
+        WHERE BodegaCorporativa.$partition.pf_mes(dtmFechaInsercion) = BodegaCorporativa.$partition.pf_mes('?')""",
+    "factura_gecc": """
+        SELECT COUNT(DISTINCT strIdentificacion) AS n
+        FROM BodegaCorporativa.bodega.factFacturaEstadoCuentaGECC
+        WHERE BodegaCorporativa.$partition.pf_mes(dtmFechaInsercion) = BodegaCorporativa.$partition.pf_mes('?')""",
+    "recaudo_gecc": """
+        SELECT COUNT(DISTINCT strIdentificacion) AS n
+        FROM BodegaCorporativa.bodega.factRecaudoMesConceptoGECC
+        WHERE BodegaCorporativa.$partition.pf_mes(dtmFechaInsercion) = BodegaCorporativa.$partition.pf_mes('?')""",
+}
+
+
+def _contar_particion(conn, fuente: str, particion: datetime.datetime) -> int:
+    """Cédulas distintas en la partición mensual `particion` de `fuente`."""
+    query = _CONTEO_PARTICION[fuente].replace("'?'", f"'{particion.strftime('%Y-%m-%d')}'")
+    return int(pd.read_sql(sql=query, con=conn)["n"].iloc[0])  # type: ignore
+
+
+def resolver_particion(
+    con_bi: str,
+    fuentes: list[str],
+    periodo_referencia: datetime.datetime,
+    umbral: float = 0.9,
+    max_retrocesos: int = 2,
+) -> datetime.datetime:
+    """Devuelve la partición más reciente (desde `periodo_referencia` hacia
+    atrás) que esté disponible y completa en TODAS las `fuentes` a la vez.
+
+    BI no siempre tiene cargado el mes anterior al momento de correr (ej. el
+    1 de septiembre la partición de agosto de factura venía vacía y la de
+    tenencia venía a medias: 22k de ~37k cédulas de la población). Por eso no
+    basta con que la partición tenga filas: se considera completa si trae al
+    menos `umbral` veces las cédulas de la partición anterior. Si no lo está,
+    se retrocede un mes y se vuelve a probar.
+
+    Pasar varias fuentes obliga a que todas usen el mismo mes (ej. factura y
+    recaudo: si falta cualquiera de las dos, retroceden juntas, para no
+    promediar 5 facturas contra 6 pagos).
+
+    Args:
+        con_bi: Cadena de conexión pyodbc a BodegaCorporativa.
+        fuentes: Claves de `_CONTEO_PARTICION` que deben estar disponibles.
+        periodo_referencia: Primer día del mes que se quiere usar idealmente.
+        umbral: Fracción mínima de cédulas frente a la partición anterior.
+        max_retrocesos: Cuántos meses se puede retroceder como máximo.
+
+    Returns:
+        Primer día del mes de la partición a usar.
+
+    Raises:
+        ValueError: Si ninguna partición dentro de `max_retrocesos` está
+            disponible — mejor detenerse que puntuar con datos incompletos.
+    """
+    conn = None
+    try:
+        conn = pyodbc.connect(con_bi)
+        for retroceso in range(max_retrocesos + 1):
+            candidata = periodo_referencia - relativedelta(months=retroceso)
+            anterior = candidata - relativedelta(months=1)
+
+            completa = True
+            for fuente in fuentes:
+                n_candidata = _contar_particion(conn, fuente, candidata)
+                n_anterior = _contar_particion(conn, fuente, anterior)
+                if n_candidata == 0 or n_candidata < umbral * n_anterior:
+                    print(
+                        f"{fuente} -- Partición {candidata:%Y%m} no disponible/incompleta "
+                        f"({n_candidata:,} vs {n_anterior:,} en {anterior:%Y%m})"
+                    )
+                    completa = False
+                    break
+
+            if completa:
+                print(f"{'+'.join(fuentes)} -- Se usa partición {candidata:%Y%m} (retrocedió {retroceso})")
+                return candidata
+    finally:
+        if conn is not None:
+            conn.close()
+
+    raise ValueError(
+        f"{'+'.join(fuentes)}: ninguna partición disponible entre {periodo_referencia:%Y%m} "
+        f"y {max_retrocesos} meses atrás."
+    )
+
+
 def extract_inactivos(
     con_bi:str
 ) -> pd.DataFrame:
@@ -115,7 +218,9 @@ def extract_cantidad_productos(
     """
     Extrae la cantidad de productos tenidos por cada cédula de `inac`, consultando
     BodegaCorporativa en el periodo inmediatamente anterior al periodo de cada
-    cédula (ej. Periodo 202606 en `inac` -> se consulta el periodo 202605).
+    cédula (ej. Periodo 202606 en `inac` -> se consulta el periodo 202605). Si
+    esa partición aún no está completa en BI, retrocede meses
+    (`resolver_particion`).
 
     La query SQL se obtiene desde sql/cantidad_productos.sql.
 
@@ -152,8 +257,10 @@ def extract_cantidad_productos(
     df_list = []
 
     for periodo, grupo in inac.groupby("Periodo"):
-        periodo_consulta = (
-            datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1)
+        periodo_consulta = resolver_particion(
+            con_bi=con_bi,
+            fuentes=["tenencia"],
+            periodo_referencia=datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1),
         ).strftime("%Y-%m-%d")
 
         cedulas_str = [str(c) for c in grupo["ID"].unique().tolist()]
@@ -195,7 +302,12 @@ def extract_v_360(
     (Tipo_cliente_*, Valorperseverancia) para las cédulas de `inac`, consultando
     en el periodo inmediatamente anterior al periodo de cada cédula (ej. Periodo
     202606 en `inac` -> se consulta el periodo 202605), igual que
-    `extract_cantidad_productos`.
+    `extract_cantidad_productos`. Si esa partición aún no está completa,
+    retrocede meses (`resolver_particion`).
+
+    Usa la tabla histórica `ConsultaIntegral360`, no `_Diaria`: la diaria solo
+    guarda la última carga (el mes de referencia desaparece apenas entra la
+    siguiente) y además trae `Tipo_Cliente_Bancoomeva` vacío.
 
     La query SQL se obtiene desde sql/v_360.sql.
 
@@ -233,8 +345,10 @@ def extract_v_360(
     df_list = []
 
     for periodo, grupo in inac.groupby("Periodo"):
-        periodo_consulta = (
-            datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1)
+        periodo_consulta = resolver_particion(
+            con_bi=con_bi,
+            fuentes=["v_360"],
+            periodo_referencia=datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1),
         ).strftime("%Y-%m-%d")
 
         cedulas_str = [str(c) for c in grupo["ID"].unique().tolist()]
@@ -283,7 +397,8 @@ def extract_demografica(
     Extrae de Demografica solo las columnas necesarias para el scoring D2-D4
     (Ingresos, Cuotas_canceladas_aportes, Saldoaportes, Antiguedad) para las
     cédulas de `inac`, consultando en el periodo inmediatamente anterior al
-    periodo de cada cédula, igual que `extract_cantidad_productos`.
+    periodo de cada cédula (o el más reciente completo, ver
+    `resolver_particion`), igual que `extract_cantidad_productos`.
 
     La query SQL se obtiene desde sql/demo.sql.
 
@@ -320,10 +435,12 @@ def extract_demografica(
     df_list = []
 
     for periodo, grupo in inac.groupby("Periodo"):
-        periodo_consulta = (
-            datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1)
+        periodo_consulta = resolver_particion(
+            con_bi=con_bi,
+            fuentes=["demografica"],
+            periodo_referencia=datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1),
         ).strftime("%Y-%m-%d")
-        
+
         # --- Periodo final between --- #
         periodo_ym = (
             datetime.datetime.today() - relativedelta(months=1)
@@ -385,7 +502,8 @@ def extract_tenencia_historica(
     hacia atrás desde el periodo de referencia de cada cédula e incluyéndolo)
     para poder calcular `Recencia_ultimo_producto` en la transformación. El
     periodo de referencia es el mismo que usa `extract_cantidad_productos`
-    (Periodo de `inac` - 1 mes). Incluirlo es necesario para poder detectar una
+    (Periodo de `inac` - 1 mes, o el más reciente completo según
+    `resolver_particion`). Incluirlo es necesario para poder detectar una
     mejora de tenencia ocurrida justo en ese mes (comparándolo contra el mes
     inmediatamente anterior).
 
@@ -428,7 +546,14 @@ def extract_tenencia_historica(
     df_list = []
 
     for periodo, grupo in inac.groupby("Periodo"):
-        periodo_referencia = datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1)
+        # Si el mes de referencia no está completo, la ventana entera de
+        # `meses_atras` meses se corre hacia atrás (mismo mes que usa
+        # extract_cantidad_productos, que resuelve contra la misma tabla).
+        periodo_referencia = resolver_particion(
+            con_bi=con_bi,
+            fuentes=["tenencia"],
+            periodo_referencia=datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1),
+        )
 
         periodos_historicos = [
             (periodo_referencia - relativedelta(months=i)).strftime("%Y-%m-%d")
@@ -547,11 +672,10 @@ def extract_fac_rec_gecc(
     contados hacia atrás desde el periodo de referencia de cada cédula e
     incluyéndolo) para poder calcular `Factura_Total_Promedio_GECC_6M` y
     `Recaudo_Total_Promedio_GECC_6M` en la transformación (`calcular_promedio_fac_rec`).
-    El periodo de referencia es el mismo que usa `extract_cantidad_productos`
-    (Periodo de `inac` - 1 mes). Incluirlo es necesario porque la ventana de
-    `calcular_promedio_fac_rec` se calcula hacia atrás desde el Periodo
-    objetivo de `inac`, así que necesita datos hasta el mes de referencia
-    inclusive (mismo criterio que `extract_tenencia_historica`).
+    El periodo de referencia es Periodo de `inac` - 1 mes, o el más reciente
+    en el que factura Y recaudo estén ambas completas (`resolver_particion`),
+    incluido en la ventana. `calcular_promedio_fac_rec` ancla su ventana a
+    ese último mes extraído, así que un retroceso no le deja meses de menos.
 
     La query SQL se obtiene desde sql/fac_rec_gecc.sql.
 
@@ -592,7 +716,14 @@ def extract_fac_rec_gecc(
     df_list = []
 
     for periodo, grupo in inac.groupby("Periodo"):
-        periodo_referencia = datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1)
+        # Factura y recaudo se resuelven JUNTAS: si cualquiera de las dos no
+        # tiene el mes completo, retroceden ambas (no mezclar 5 facturas con
+        # 6 pagos). La ventana de `meses_atras` meses se corre entera.
+        periodo_referencia = resolver_particion(
+            con_bi=con_bi,
+            fuentes=["factura_gecc", "recaudo_gecc"],
+            periodo_referencia=datetime.datetime.strptime(f"{periodo}01", "%Y%m%d") - relativedelta(months=1),
+        )
 
         periodos_historicos = [
             (periodo_referencia - relativedelta(months=i)).strftime("%Y-%m-%d")
